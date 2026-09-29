@@ -1,0 +1,5 @@
+# Replace this example with the real public DNS name before starting HTTPS.
+assessment.example.org {
+    encode gzip
+    reverse_proxy app:8080
+}

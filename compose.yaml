@@ -1,0 +1,31 @@
+name: cdc-surveillance
+services:
+  app:
+    build: .
+    image: cdc-surveillance:local
+    restart: unless-stopped
+    init: true
+    env_file:
+      - path: ./docker.env
+        format: raw
+    environment:
+      AFRICA_CDC_DB_PATH: /data/africa_cdc_web.db
+      AFRICA_CDC_REDCAP_AUTO_SYNC_MINUTES: "0"
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - app_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  app_data:

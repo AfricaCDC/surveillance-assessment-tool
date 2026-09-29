@@ -1,0 +1,17 @@
+# Allow only runtime source and assets into the build context.
+**
+!Dockerfile
+!requirements.txt
+!server.py
+!surveillance_app.py
+!report_builder.py
+!standard_assessment_template.xlsx
+!static/
+!static/**
+# Defense in depth if private files ever appear under static/.
+**/.env*
+**/*.env
+**/*.db*
+**/*.pem
+**/*.key
+**/__pycache__/

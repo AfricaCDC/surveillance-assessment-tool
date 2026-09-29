@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Africa CDC Gap Analysis</title>
+  <link rel="stylesheet" href="/styles.css?v=27">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <img src="/africa_cdc_logo_full.png" alt="Africa CDC">
+      <div>
+        <p class="eyebrow">AFRICA CENTRES FOR DISEASE CONTROL AND PREVENTION</p>
+        <h1>Surveillance Systems Profiling and Gap Analysis</h1>
+      </div>
+    </div>
+    <nav aria-label="Main navigation">
+      <details id="data-collection-menu" class="nav-dropdown">
+        <summary id="data-collection-nav" class="nav-button active">Data Collection</summary>
+        <div class="nav-dropdown-menu">
+          <button class="nav-button active" data-view="phase1">Inventory</button>
+          <button class="nav-button" data-view="phase2">Profiling</button>
+          <button class="nav-button" data-view="workspace">Gap Analysis</button>
+        </div>
+      </details>
+      <button class="nav-button" data-view="fullreport">Analysis</button>
+      <button id="user-management-nav" class="nav-button" data-view="users">Users</button>
+      <button id="my-entries-nav" class="nav-button hidden" data-view="myentries">My Entries</button>
+      <span class="nav-spacer"></span>
+      <label class="language-control" for="app-language"><span>Language</span><select id="app-language" aria-label="Display language"><option value="en">English</option><option value="fr">Français (preview)</option><option value="ar">العربية (preview)</option><option value="pt">Português (preview)</option><option value="es">Español (preview)</option><option value="sw">Kiswahili (preview)</option></select></label>
+      <span id="country-project-controls" class="country-project-controls"><select id="country-project-select" aria-label="Active country assessment"></select><button id="refresh-country-projects" class="nav-button" type="button">Refresh Countries</button></span>
+      <input id="profile-file" type="file" accept=".json" hidden>
+      <label class="nav-button file-nav">Import Standard Excel<input id="full-excel" type="file" accept=".xlsx,.xlsm" hidden></label>
+      <button id="save-profile" type="button" hidden></button>
+      <details id="general-guide-menu" class="nav-dropdown">
+        <summary id="general-guide-nav" class="nav-button">General Guide</summary>
+        <div class="nav-dropdown-menu">
+          <a id="user-manual-nav" class="nav-button" href="/user-manual.html" target="_blank" rel="noopener">User Manual</a>
+          <a id="admin-guide-nav" class="nav-button hidden" href="/admin-guide.html" target="_blank" rel="noopener">Admin Guide</a>
+        </div>
+      </details>
+      <button id="logout" class="nav-button logout-button">Log out</button>
+    </nav>
+  </header>
+
+  <main>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <section id="phase1-view" class="view active phase-form-view">
+      <div class="page-heading"><div><p class="eyebrow">STEP 1 OF 2 · INVENTORY</p><h2>HIS Inventory</h2><p>Start with the country and reporting period, then add each surveillance tool or information system.</p></div><div class="button-row"><label class="button secondary file-button">Import Standard Inventory<input id="phase1-excel" type="file" accept=".xlsx,.xlsm" hidden></label><button id="phase1-export" class="button secondary">Export Standard Inventory</button><button id="save-phase1" class="button primary">Save Inventory</button></div></div>
+      <section id="assessment-start-panel" class="assessment-start-panel hidden" aria-labelledby="assessment-start-title">
+        <div><h3 id="assessment-start-title">Assessment data</h3><p>Select a country and reporting period, then add a blank assessment or load an existing one from REDCap.</p></div>
+        <div class="assessment-start-controls">
+          <input id="assessment-start-country" list="africa-cdc-country-list" autocomplete="off" placeholder="Search countries" aria-label="Country">
+          <select id="assessment-start-period" aria-label="Reporting period"></select>
+          <button id="create-assessment" class="button primary" type="button">Add new data</button>
+          <button id="redcap-pull" class="button secondary" type="button">Load REDCap data</button>
+        </div>
+      </section>
+      <article class="card phase-card">
+        <div class="form-grid compact"><label>Country <span class="required-mark">Required</span><input id="p1-country" list="africa-cdc-country-list" autocomplete="off" placeholder="Search countries"></label><label>Reporting period <span class="required-mark">Required</span><select id="p1-period" aria-label="Reporting period"></select></label></div>
+        <div class="working-group-bar"><label>Working as<select id="inventory-group-filter"><option value="">Coordinator — all tools</option></select></label></div>
+        <details id="inventory-assignment-panel" class="inventory-collaboration admin-assignment-panel">
+          <summary><strong>Group tool assignments</strong><span>Administrator only</span></summary>
+          <div class="section-title-row"><div><h3>Group tool assignments</h3><p class="section-hint">Create working groups, assign each tool, then select a group to enter only its allocated tools.</p></div></div>
+          <div class="inventory-group-controls">
+            <div><label>Add another group</label><div class="inline-form"><input id="inventory-new-group" placeholder="e.g. Inventory Group 4"><button id="inventory-add-group" class="button secondary" type="button">Add Group</button></div></div>
+          </div>
+          <div id="inventory-assignment-list" class="inventory-assignment-list"></div>
+        </details>
+        <div class="section-title-row"><h3>Tools and systems</h3><button id="add-tool" class="button secondary">Add another tool</button></div>
+        <div class="inventory-toolbar">
+          <label>Tool being entered<select id="phase1-tool-select"></select></label>
+          <span id="phase1-tool-position" class="pill"></span>
+        </div>
+        <div id="phase1-tools"></div>
+        <input id="p1-comments" type="hidden" value="">
+        <div class="workflow-actions"><button id="phase1-prev" class="button secondary">Previous tool</button><button id="phase1-next" class="button secondary">Next tool</button><button class="button primary" data-go="phase2">Save and continue to Profiling</button></div>
+      </article>
+    </section>
+
+    <section id="phase2-view" class="view phase-form-view">
+      <div class="page-heading"><div><p class="eyebrow">STEP 2 OF 3 · PROFILING</p><h2>System Profiling</h2><p>Work through the sections below. You can collapse completed sections and return at any time.</p></div><div class="button-row"><label class="button secondary file-button">Import Standard Profiling<input id="phase2-excel" type="file" accept=".xlsx,.xlsm" hidden></label><button id="phase2-export" class="button secondary">Export Standard Profiling</button><button id="save-phase2" class="button primary">Save Profiling</button></div></div>
+      <div class="working-group-bar card"><label>Working as<select id="profiling-group-filter"><option value="">Coordinator — all systems</option></select></label></div>
+      <details id="profiling-assignment-panel" class="inventory-collaboration card profiling-collaboration admin-assignment-panel">
+        <summary><strong>Profiling group assignments</strong><span>Administrator only</span></summary>
+        <div class="section-title-row"><div><h3>Profiling group assignments</h3><p class="section-hint">The coordinator allocates systems for detailed profiling. Select a group to see only its assigned systems.</p></div></div>
+        <div class="inventory-group-controls">
+          <div><label>Add another group</label><div class="inline-form"><input id="profiling-new-group" placeholder="e.g. Profiling Group 4"><button id="profiling-add-group" class="button secondary" type="button">Add Group</button></div></div>
+        </div>
+        <div id="profiling-assignment-list" class="inventory-assignment-list"></div>
+      </details>
+      <div class="phase2-toolbar card"><label>System being assessed<select id="phase2-system"></select></label><div class="profile-progress"><div><span id="phase2-position" class="pill"></span><strong id="phase2-completion">0% complete</strong></div><div class="progress-track"><span id="phase2-progress"></span></div></div></div>
+      <div id="phase2-form" class="phase2-sections"></div>
+      <div class="workflow-actions"><button id="phase2-back" class="button secondary">Back to Inventory</button><button id="phase2-prev" class="button secondary">Previous</button><button id="phase2-next" class="button primary">Next System / Gap Analysis</button></div>
+    </section>
+
+    <section id="workspace-view" class="view">
+      <aside class="sidebar card">
+        <div class="sidebar-heading">
+          <p class="eyebrow">STEP 3 OF 3 · GAP ANALYSIS</p>
+          <h2>Group and domains</h2>
+        </div>
+        <label for="group-select">Working as</label>
+        <select id="group-select"></select>
+        <details id="gap-assignment-panel" class="admin-assignment-panel gap-assignment-panel">
+          <summary><strong>Domain assignments</strong><span>Administrator only</span></summary>
+          <div class="inline-form"><input id="new-group" placeholder="e.g. Gap Group 4" aria-label="New group name"><button id="add-group" class="button secondary">Add Group</button></div>
+          <div id="gap-assignment-list" class="gap-assignment-list"></div>
+        </details>
+        <div class="sidebar-divider"></div>
+        <div class="domain-heading">
+          <h3>Assessment domains</h3>
+          <span id="domain-count" class="pill">0/9</span>
+        </div>
+        <div id="domain-list" class="domain-list"></div>
+        <div class="sidebar-actions">
+          <label class="file-button button secondary">
+            Import Standard Gap Excel
+            <input id="excel-files" type="file" accept=".xlsx,.xlsm" multiple hidden>
+          </label>
+          <button id="export-excel" class="button ghost">Export Excel</button>
+          <button id="phase3-export" class="button primary">Export Standard Gap Excel</button>
+        </div>
+      </aside>
+
+      <section class="content-column">
+        <div class="assessment-meta card">
+          <div>
+            <p class="eyebrow">CURRENT ASSESSMENT</p>
+            <input id="assessment-title" class="title-input" value="Africa CDC Gap Analysis">
+          </div>
+          <div class="save-state"><span class="status-dot"></span><span id="save-state">All changes saved</span></div>
+          <textarea id="assessment-scope" rows="2" placeholder="Assessment scope or context"></textarea>
+        </div>
+        <div id="empty-domain" class="empty-state card">
+          <div class="empty-icon">9</div>
+          <h2>Select an assigned domain</h2>
+          <p>Choose your working group, then select one of the domains assigned to it.</p>
+        </div>
+        <div id="domain-workspace" class="card hidden">
+          <div class="domain-title-row">
+            <div>
+              <p id="domain-number" class="eyebrow"></p>
+              <h2 id="domain-title"></h2>
+            </div>
+            <div class="domain-actions">
+              <span id="domain-owner" class="owner-badge"></span>
+              <select id="reassign-group" class="hidden" aria-label="New participant group for this domain"></select>
+              <button id="reassign-domain" class="button secondary hidden">Reassign domain</button>
+              <button id="release-domain" class="button danger hidden">Release domain</button>
+            </div>
+          </div>
+          <div class="progress-track"><span id="domain-progress"></span></div>
+          <div id="questions"></div>
+          <div class="sticky-save">
+            <span id="question-progress">0 of 5 questions answered</span>
+            <button id="save-domain" class="button primary">Save domain responses</button>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <section id="dashboard-view" class="view">
+      <div class="page-heading">
+        <div><p class="eyebrow">LIVE PROGRESS</p><h2>Assessment dashboard</h2></div>
+        <button class="button secondary refresh-state">Refresh data</button>
+      </div>
+      <div id="metrics" class="metrics"></div>
+      <div class="dashboard-grid">
+        <article class="card chart-card"><h3>Domain completion</h3><div id="domain-chart" class="bar-chart"></div></article>
+        <article class="card chart-card"><h3>Progress by group</h3><div id="group-chart" class="bar-chart"></div></article>
+      </div>
+      <article class="card status-table-card">
+        <h3>Domain status</h3>
+        <div class="table-wrap"><table><thead><tr><th>Domain</th><th>Assigned group</th><th>Answered</th><th>Completion</th><th>Last update</th></tr></thead><tbody id="status-table"></tbody></table></div>
+      </article>
+    </section>
+
+    <section id="report-view" class="view">
+      <div class="page-heading">
+        <div><p class="eyebrow">GAP ANALYSIS OUTPUT</p><h2>Gaps and recommendations summary</h2></div>
+        <div class="button-row"><button class="button secondary" id="report-txt">Export TXT</button><button class="button secondary" id="report-docx">Export DOCX</button><button class="button secondary" id="print-report">Print / Save PDF</button><button class="button primary" id="report-export">Export Excel</button></div>
+      </div>
+      <div id="report-summary" class="report-summary"></div>
+    </section>
+    <section id="fullreport-view" class="view">
+      <div class="page-heading"><div><p class="eyebrow">ASSESSMENT RESULTS</p><h2>Analysis report</h2><p>Select the assessment section, country and reporting period to generate its report.</p></div><div class="button-row"><button class="button secondary" id="analysis-docx" type="button">Download Word</button><button class="button secondary" onclick="window.print()">Print / Save PDF</button></div></div>
+      <div class="analysis-filter-panel" aria-labelledby="analysis-filter-title">
+        <label><span id="analysis-filter-title">Report section</span><select id="analysis-section"><option value="inventory">Inventory</option><option value="profiling">Profiling</option><option value="gap">Gap Analysis</option></select></label>
+        <label><span>Country</span><input id="analysis-country" list="africa-cdc-country-list" autocomplete="off" placeholder="Search countries"></label>
+        <label><span>Reporting period</span><select id="analysis-period"></select></label>
+        <button id="generate-analysis" class="button primary" type="button">Generate Report</button>
+      </div>
+      <div class="output-tabs"><button id="show-summary" class="button primary" type="button">Summary Report</button><button id="show-graphs" class="button secondary" type="button">Visual Dashboard</button></div>
+      <div id="full-report" class="report-summary"><article class="empty-state card"><h2>Select report filters</h2><p>The generated report will appear here.</p></article></div>
+      <div id="graph-output" class="hidden output-dashboard">
+        <div id="portfolio-metrics" class="metrics"></div>
+        <div class="dashboard-grid">
+          <article class="card chart-card"><h3>System portfolio by type</h3><div id="system-type-chart" class="bar-chart"></div></article>
+          <article class="card chart-card"><h3>Surveillance function coverage</h3><div id="function-chart" class="bar-chart"></div></article>
+          <article class="card chart-card"><h3>System ownership</h3><div id="ownership-chart" class="bar-chart"></div></article>
+          <article class="card chart-card"><h3>API availability</h3><div id="api-chart" class="bar-chart"></div></article>
+        </div>
+      </div>
+    </section>
+    <section id="myentries-view" class="view">
+      <div class="page-heading"><div><p class="eyebrow">GROUP SUBMISSION</p><h2>My group overview report</h2><p>A general overview of everything entered using this account.</p></div><div class="button-row"><button id="my-entries-download" class="button secondary">Download Report</button><button id="my-entries-print" class="button primary">Print / Save PDF</button></div></div>
+      <div id="my-entries-content" class="report-summary"></div>
+    </section>
+    <section id="users-view" class="view">
+      <div class="page-heading"><div><p class="eyebrow">ADMINISTRATOR ONLY</p><h2>User Management</h2><p>Create and manage Coordinator accounts for the application.</p></div></div>
+      <article class="card user-create-panel">
+        <div><h3>Add Coordinator</h3><p>Coordinators can manage groups, assignments and reports, but cannot manage users, REDCap configuration or the Admin Guide.</p></div>
+        <div class="form-grid compact"><label>Full name <span class="required-mark">Required</span><input id="application-user-name" autocomplete="off" placeholder="Enter full name"></label><label>Username or email <span class="required-mark">Required</span><input id="application-user-username" autocomplete="off" placeholder="Enter username or email"></label></div>
+        <button id="create-application-user" class="button primary" type="button">Create Coordinator</button>
+      </article>
+      <article class="card user-list-panel">
+        <div class="section-title-row"><div><h3>Application users</h3><p class="section-hint">Password resets end the user's active sessions. Save newly generated credentials when they appear.</p></div><button id="refresh-application-users" class="button secondary" type="button">Refresh</button></div>
+        <div class="table-wrap"><table><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>Last login</th><th>Actions</th></tr></thead><tbody id="application-users-list"></tbody></table></div>
+      </article>
+      <article class="card user-list-panel">
+        <div><h3>Report assistant provider</h3><p class="section-hint">Local Ollama is the default. Online mode sends only the generated report and current question to the approved provider; it does not send underlying REDCap records or save report content in the application database.</p></div>
+        <div class="form-grid compact"><label>Provider<select id="assistant-provider"><option value="local">Local Ollama (default)</option><option value="openai">OpenAI API (online)</option></select></label><label class="check-option"><input id="assistant-online-approved" type="checkbox"> I confirm online processing is authorised and provider retention terms are approved.</label></div>
+        <div class="button-row"><button id="save-assistant-provider" class="button primary" type="button">Save provider</button><button id="test-assistant-provider" class="button secondary" type="button">Test provider</button></div>
+        <p id="assistant-provider-status" class="section-hint">Loading provider status...</p>
+      </article>
+    </section>
+  </main>
+
+  <aside id="report-assistant" class="report-assistant-shell" aria-label="Local report assistant">
+    <section id="assistant-panel" class="report-assistant card hidden" aria-labelledby="report-assistant-title">
+      <div id="assistant-drag-handle" class="report-assistant-heading" title="Drag to move"><div class="assistant-identity"><span class="assistant-mark" aria-hidden="true">A</span><div><h3 id="report-assistant-title">Report assistant</h3><p><span class="assistant-status-dot"></span>Local · Current report only</p></div></div><button id="close-report-assistant" class="assistant-close" type="button" title="Minimize report assistant" aria-label="Minimize report assistant">×</button></div>
+      <div class="assistant-prompts" aria-label="Suggested questions"><button type="button" data-assistant-prompt="Organize this assessment into a professional report with an executive summary, scope, key findings, a substantive discussion of every table and major result, thematic analysis, prioritized recommendations, action plan, limitations, and conclusion. Interpret the evidence; do not repeat the source report.">Professional report</button><button type="button" data-assistant-prompt="Discuss every table in this report in order. For each table, identify the strongest patterns, variation, outliers, strengths, gaps, missing evidence, operational implications, and supported actions using exact figures where available. Finish with cross-table insights and decision implications. Do not merely restate rows.">Discuss all tables</button><button type="button" data-assistant-prompt="Analyze the proposed Unified DHIS2 Surveillance approach against all functions recorded for the other tools. Produce a capability and functional-gap matrix, identify what should be configured in DHIS2, integrated, retained externally, migrated after validation, or marked evidence insufficient, then give proposed short-term (0-6 months) and long-term (6-24 months) recommendations with risks, dependencies, leads, and indicators.">Unified DHIS2 toolkit</button><button type="button" data-assistant-prompt="Conduct a thematic analysis of this report. For each theme, show the supporting evidence, affected systems or domains, operational implication, and priority.">Thematic analysis</button><button type="button" data-assistant-prompt="Create a professional action plan table with Action, Evidence or Rationale, Priority, Suggested Lead, Timeframe, and Verifiable Indicator. Clearly label proposed details.">Action plan</button><button type="button" data-assistant-prompt="Draft a concise executive summary for senior decision-makers using only the report evidence.">Executive summary</button><button type="button" data-assistant-prompt="Synthesize the key findings without repeating similar evidence.">Key findings</button><button type="button" data-assistant-prompt="Consolidate and prioritize the recommendations, linking each one to its supporting finding.">Recommendations</button><button type="button" data-assistant-prompt="Identify cross-cutting issues shared across systems or domains, and state the evidence and implications.">Cross-cutting issues</button><button type="button" data-assistant-prompt="Identify data-quality limitations, missing evidence, inconsistencies, and how they affect interpretation.">Data quality</button></div>
+      <div id="assistant-messages" class="assistant-messages" aria-live="polite"><div class="assistant-empty"><strong>Generate a report to start</strong><span>I can discuss its Inventory, Profiling, or Gap Analysis findings.</span></div></div>
+      <div class="assistant-entry"><textarea id="assistant-question" rows="1" placeholder="Message the report assistant" aria-label="Message the local report assistant" disabled></textarea><button id="ask-report-assistant" type="button" title="Send message" aria-label="Send message" disabled><span aria-hidden="true">↑</span></button></div>
+      <div class="assistant-download-row"><button id="download-assistant-word" type="button" title="Download latest response as Word">Download latest response in Word</button></div>
+      <p class="assistant-disclaimer">Local responses can be incomplete. Verify important findings.</p>
+      <span id="assistant-resize-handle" class="assistant-resize-handle" role="separator" aria-label="Resize report assistant" title="Drag to resize"></span>
+    </section>
+    <button id="assistant-toggle" class="assistant-launch" type="button" aria-controls="assistant-panel" aria-expanded="false"><span class="assistant-launch-icon" aria-hidden="true">A</span>Report assistant</button>
+  </aside>
+
+  <datalist id="africa-cdc-country-list"></datalist>
+
+  <dialog id="change-password-dialog" class="password-dialog">
+    <form id="change-password-form" method="dialog">
+      <div class="section-title-row"><div><p class="eyebrow">ACCOUNT SECURITY</p><h2>Change Password</h2></div><button id="close-password-dialog" class="button secondary" type="button">Close</button></div>
+      <p>Enter your temporary or current password, then choose a new password containing uppercase and lowercase letters, a number, and a symbol.</p>
+      <label>Current password<input id="current-password" type="password" autocomplete="current-password" required></label>
+      <label>New password<input id="new-password" type="password" autocomplete="new-password" required></label>
+      <label>Confirm new password<input id="confirm-new-password" type="password" autocomplete="new-password" required></label>
+      <p id="change-password-error" class="login-error hidden"></p>
+      <button id="submit-password-change" class="button primary" type="submit">Change Password</button>
+    </form>
+  </dialog>
+
+  <dialog id="admin-change-password-dialog" class="password-dialog">
+    <form id="admin-change-password-form" method="dialog">
+      <div class="section-title-row"><div><p class="eyebrow">USER MANAGEMENT</p><h2>Change User Password</h2></div><button id="close-admin-password-dialog" class="button secondary" type="button">Close</button></div>
+      <p>Set a new password for <strong id="admin-password-user-name">this user</strong>. Their active sessions will end immediately.</p>
+      <label>New password<input id="admin-new-password" type="password" autocomplete="new-password" required></label>
+      <label>Confirm new password<input id="admin-confirm-password" type="password" autocomplete="new-password" required></label>
+      <p class="section-hint">Use at least six characters, including uppercase and lowercase letters, a number, and a symbol.</p>
+      <p id="admin-change-password-error" class="login-error hidden"></p>
+      <button id="submit-admin-password-change" class="button primary" type="submit">Change Password</button>
+    </form>
+  </dialog>
+
+  <footer><span>Africa CDC Surveillance Systems Assessment <span id="app-version">v1.0.40</span></span><span id="connection-status">REDCap primary database</span></footer>
+  <script src="/app.js?v=101"></script>
+  <script src="/i18n.js?v=3"></script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Africa CDC Assessment</title>
+  <link rel="stylesheet" href="/styles.css?v=10">
+  <link rel="stylesheet" href="/login.css?v=2">
+</head>
+<body class="login-page">
+  <main class="login-shell">
+    <section class="login-brand-panel">
+      <img src="/africa_cdc_logo_full.png" alt="Africa CDC">
+      <p class="eyebrow">AFRICA CENTRES FOR DISEASE CONTROL AND PREVENTION</p>
+      <h1>Surveillance Systems Profiling and Gap Analysis</h1>
+      <p>Secure access to Inventory, Profiling and Gap Analysis data.</p>
+    </section>
+    <section class="login-card card">
+      <div id="login-loading" class="login-loading">Checking application security…</div>
+      <form id="login-form" class="hidden">
+        <p id="login-step" class="eyebrow">SECURE SIGN IN</p>
+        <h2 id="login-title">Welcome back</h2>
+        <p id="login-help" class="login-help">Enter your account details to continue.</p>
+        <label id="display-name-field" class="hidden">Your name<input id="display-name" autocomplete="name" placeholder="e.g. George Okello"></label>
+        <label>Username or email<input id="username" autocomplete="username" required placeholder="Enter username or email address"></label>
+        <label>Password<input id="password" type="password" autocomplete="current-password" required minlength="6" placeholder="Enter password"></label>
+        <div id="password-requirements" class="password-requirements hidden" aria-live="polite">
+          <p>Password requirements</p>
+          <ul>
+            <li data-rule="length">At least 6 characters</li>
+            <li data-rule="upper">One capital letter</li>
+            <li data-rule="lower">One lowercase letter</li>
+            <li data-rule="number">One number</li>
+            <li data-rule="symbol">One symbol</li>
+          </ul>
+          <strong id="password-valid" class="hidden">Password meets all requirements</strong>
+        </div>
+        <label id="confirm-field" class="hidden">Confirm password<input id="confirm-password" type="password" autocomplete="new-password" minlength="6" placeholder="Enter password again"></label>
+        <div id="login-error" class="login-error hidden" role="alert"></div>
+        <button id="login-submit" class="button primary" type="submit">Sign in</button>
+      </form>
+      <p class="login-security">Passwords are securely hashed and do not expire. For security, you will be signed out after 12 hours and can sign in again with the same password.</p>
+    </section>
+  </main>
+  <script src="/login.js?v=2"></script>
+</body>
+</html>

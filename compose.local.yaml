@@ -1,0 +1,6 @@
+# Local Windows run when port 8080 is reserved by the host.
+# docker compose -f compose.yaml -f compose.local.yaml up -d --build --wait
+services:
+  app:
+    ports: !override
+      - "127.0.0.1:18080:8080"
