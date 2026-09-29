@@ -1,0 +1,93 @@
+{
+  "input": "C:\\Users\\George\\Desktop\\Webapp Surviellance Digital tools assessment\\Africa_CDC_South_Sudan_Assistant_Analysis_Improved.docx",
+  "fonts_by_char_count": {},
+  "direct_run_formatting_runs": 76,
+  "direct_paragraph_formatting_paragraphs": 70,
+  "heading_like_paragraphs_not_heading_style": [
+    {
+      "para_index": 32,
+      "text": "Tool",
+      "style": "Normal"
+    },
+    {
+      "para_index": 33,
+      "text": "Recorded functions",
+      "style": "Normal"
+    },
+    {
+      "para_index": 34,
+      "text": "Functions covered by Unified DHIS2 Toolkit",
+      "style": "Normal"
+    },
+    {
+      "para_index": 35,
+      "text": "Required functions not covered by toolkit",
+      "style": "Normal"
+    },
+    {
+      "para_index": 36,
+      "text": "Recommendation",
+      "style": "Normal"
+    }
+  ],
+  "examples": {
+    "direct_run_formatting": [
+      {
+        "para_index": 2,
+        "run_text": "South Sudan | July 2026",
+        "style": "Normal"
+      },
+      {
+        "para_index": 32,
+        "run_text": "Tool",
+        "style": "Normal"
+      },
+      {
+        "para_index": 33,
+        "run_text": "Recorded functions",
+        "style": "Normal"
+      },
+      {
+        "para_index": 34,
+        "run_text": "Functions covered by Unified DHIS2 Toolkit",
+        "style": "Normal"
+      },
+      {
+        "para_index": 35,
+        "run_text": "Required functions not covered by toolkit",
+        "style": "Normal"
+      }
+    ],
+    "direct_paragraph_formatting": [
+      {
+        "para_index": 37,
+        "text": "HMIS/DHIS2",
+        "style": "Normal"
+      },
+      {
+        "para_index": 38,
+        "text": "Alerts and Notifications, Case-based Surveillance, Community Event Notification, Data analysis, IDSR/weekly syndromic su",
+        "style": "Normal"
+      },
+      {
+        "para_index": 39,
+        "text": "All 12 functions, including case investigation, contact follow-up, and case classification",
+        "style": "Normal"
+      },
+      {
+        "para_index": 40,
+        "text": "None",
+        "style": "Normal"
+      },
+      {
+        "para_index": 41,
+        "text": "Retain and enhance existing DHIS2 functionality through Unified DHIS2, subject to configuration and validation",
+        "style": "Normal"
+      }
+    ]
+  },
+  "notes": [
+    "Direct formatting is not always wrong, but it often causes inconsistent output when templates change.",
+    "Heading-like paragraphs not using Heading styles can break TOC and accessibility."
+  ]
+}

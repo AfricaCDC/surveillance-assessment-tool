@@ -1,0 +1,101 @@
+AFRICA CDC WEB ASSESSMENT - FOLDER STRUCTURE
+============================================
+
+Webapp Surviellance Digital tools assessment\
+|-- Africa CDC Assessment\
+|   |-- AfricaCDCWebAssessment.exe
+|   |-- africa_cdc_web.db
+|   |-- .env
+|   |-- .env.example
+|   `-- README_FIRST.txt
+|-- server.py
+|-- report_builder.py
+|-- surveillance_app.py
+|-- requirements.txt
+|-- start_web_app.bat
+|-- build_exe.bat
+|-- AfricaCDCWebAssessment.spec
+|-- africa_cdc_web.db
+|-- .env
+|-- .env.example
+|-- standard_assessment_template.xlsx
+|-- static\
+|   |-- index.html
+|   |-- app.js
+|   |-- styles.css
+|   |-- login.html
+|   |-- login.js
+|   |-- login.css
+|   |-- user-manual.html
+|   |-- admin-guide.html
+|   `-- africa_cdc_logo_full.png
+|-- Backups\
+|-- outputs\
+|   `-- redcap\
+|       `-- Africa_CDC_REDCap_Data_Dictionary.csv
+|-- README.md
+|-- USER_MANUAL.md
+|-- DEPLOYMENT_GUIDE.md
+|-- WINDOWS_SERVER_DEPLOYMENT_GUIDE.md
+|-- APPLICATION_UPDATE_GUIDE.md
+|-- Africa CDC Web Assessment.code-workspace
+`-- .vscode\
+    |-- launch.json
+    |-- settings.json
+    `-- tasks.json
+
+IMPORTANT FILES
+---------------
+
+server.py
+    Starts the web server and provides the application API.
+
+start_web_app.bat
+    Starts the application on Windows.
+
+africa_cdc_web.db
+    Stores application accounts, sessions, groups, assignments, and settings.
+    Member State assessment profiles and responses are stored in REDCap, not
+    this file. Test Country data is temporary in memory and is discarded when
+    the application closes.
+
+.env
+    Stores authoritative private REDCap connection and password-security
+    values for desktop, source, and packaged launches.
+    Do not share or commit this file to source control.
+
+static\
+    Contains all browser pages, JavaScript, styles, and images.
+
+standard_assessment_template.xlsx
+    Standard Excel template used by the application.
+
+Backups\
+    Contains protected database backups.
+
+RUNTIME FILES
+-------------
+
+The following files may appear while the application is running:
+
+    africa_cdc_web.db-wal
+    africa_cdc_web.db-shm
+
+These are normal SQLite working files. Do not delete them while the
+web application is running.
+
+APPLICATION ADDRESS
+-------------------
+
+http://127.0.0.1:8080/app
+
+WINDOWS EXECUTABLE
+------------------
+
+Run build_exe.bat to create a new build under dist. The tested executable
+package currently used to run the application is:
+
+    Africa CDC Assessment\AfricaCDCWebAssessment.exe
+
+Keep .env and africa_cdc_web.db beside the executable so private settings
+and assessment data persist when the executable is replaced or upgraded.
