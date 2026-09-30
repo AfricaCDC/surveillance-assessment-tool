@@ -11,6 +11,7 @@ Open `Africa CDC Web Assessment.code-workspace`, or open this entire folder in V
 
 - `server.py`: HTTP API, REDCap assessment persistence, authentication, imports, and exports.
 - `report_builder.py`: formatted Word report generation.
+- `recommendation_engine.py`: source registration, thematic recommendation drafts and coverage checks.
 - `surveillance_app.py`: shared assessment and report logic.
 - `static/index.html`: web page structure.
 - `static/styles.css`: layout and Africa CDC visual styling.
@@ -34,6 +35,32 @@ The server computer must remain running while participants enter information.
 Ollama runs on the application server, not on each user's browser. The app calls the local Ollama HTTP API at `AFRICA_CDC_OLLAMA_URL` (default `http://127.0.0.1:11434`) and requests the exact model tag in `AFRICA_CDC_OLLAMA_MODEL` (default `qwen3:4b-instruct`). Upgrading the Ollama program normally requires no application change while its `/api/tags` and `/api/chat` endpoints remain compatible. Installing a different model does require changing the configured tag; the app does not silently switch models.
 
 On the server, run `ollama ls` to see installed tags. Set `AFRICA_CDC_OLLAMA_MODEL` to the tag you choose in the application-adjacent `.env` file (or in the deployment's environment file), and restart the application. Keep `AFRICA_CDC_OLLAMA_URL` on loopback when Ollama runs on the same server. In the app's assistant provider settings, use **Test provider** to check availability. Test a generated report as well, because a newer or larger model can change response quality, memory use, and response time. If Ollama or the configured model is unavailable, the report assistant uses its built-in response path.
+
+### Evidence-linked local recommendations
+
+Generate an assessment report, open **Report assistant**, and select **Recommendations**.
+The local model drafts short proposed actions by theme using separately numbered report
+entries (`F`), recorded recommendations (`R`) and assessment evidence (`E`). Source excerpts
+are copied by the application. Missing, unmatched and rejected entries remain in the
+**Coverage check**, which is available after generation without another model call.
+Monitoring suggestions are labelled application templates, not model-generated evidence.
+
+The checks reject unknown references, unsupported numbers and selected unsupported
+system/capability claims. They also flag references without specific wording overlap and
+actions outside their theme. These conservative checks can reject valid paraphrases;
+they do not establish clinical correctness, semantic entailment or complete coverage.
+Review the separate coverage record and unresolved entries before using a report.
+
+The recommendation path uses a 4,096-token local context and bounded sequential packets.
+Other report workflows keep their existing settings. Source updates do not modify an
+already-built desktop executable: close the existing app and use `start_web_app.bat`
+to run updated source, or rebuild the executable. Include `recommendation_engine.py`
+when deploying the source; Docker configuration already includes it.
+
+Offline checks: `python scripts/verify_recommendation_engine.py` and
+`node scripts/verify_recommendation_stream.js`. The Python check accepts a pasted example
+path plus `--live` to run the installed model and save its actual requests, responses,
+draft and coverage record under `outputs/`. It does not change assessments or accounts.
 
 ## Authentication
 

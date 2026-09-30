@@ -17,6 +17,7 @@ import threading
 import time
 import traceback
 import webbrowser
+from recommendation_engine import draft_report, format_audit, is_recommendation_request
 from datetime import datetime, timedelta, timezone
 from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -2713,6 +2714,26 @@ def configure_assistant_provider(provider, approved=False):
     return assistant_status()
 
 
+def recommendation_theme_instructions(question):
+    if not re.search(r"recommend|consolidat|group.*theme|coverage check", str(question), re.I):
+        return ""
+    return (
+        "\nRECOMMENDATIONS: Group related issues into up to eight evidence-supported themes: "
+        "Governance and coordination; Sustainable financing; Workforce and technical support; "
+        "Infrastructure and reporting continuity; System integration and transition; Surveillance "
+        "configuration and data quality; Analysis, dissemination and feedback; Data access, protection "
+        "and recovery. Omit unsupported themes. Under each provide a consolidated finding with exact "
+        "source references, one Proposed recommendation, two or three specific practical actions and "
+        "a Proposed monitoring measure. Preserve differences between systems. Distinguish respondent "
+        "suggestions from established findings. Do not invent owners, budgets, targets or deadlines. "
+        "Do not reproduce the full questionnaire or a long numbered recommendation list. Keep a short "
+        "Unresolved issues section for unmatched, contradictory or insufficient evidence. Do not claim "
+        "complete coverage from truncated source material. Only when a coverage check is requested, "
+        "map each supplied original recommendation to its theme and state combined, needs validation "
+        "or unresolved; a keyword match alone does not establish that the action addresses every detail.\n"
+    )
+
+
 def openai_report_answer(payload):
     if not OPENAI_API_KEY:
         raise RuntimeError("OpenAI is not configured")
@@ -2731,7 +2752,7 @@ def openai_report_answer(payload):
         "store": False,
         "max_output_tokens": 3500,
         "input": [
-            {"role": "system", "content": instructions},
+            {"role": "system", "content": instructions + recommendation_theme_instructions(question)},
             {"role": "user", "content": f"GENERATED REPORT:\n{report}\n\nREQUEST:\n{question}"},
         ],
     }).encode("utf-8")
@@ -2830,7 +2851,7 @@ def compact_recommendation_material(report, evidence, total_limit=9000):
     report_text = "\n".join(selected)
     evidence_text = compact_thematic_evidence(evidence, total_limit=1800) if evidence else ""
     combined = f"RELEVANT REPORT FINDINGS:\n{report_text}\n\nCOMPACT SUPPORTING EVIDENCE:\n{evidence_text}"
-    return combined[:total_limit]
+    return combined[:total_limit] + ("\nSOURCE LIMITATION: Evidence was shortened; complete coverage cannot be verified." if len(combined) > total_limit else "")
 
 
 def assistant_numeric_grounding_warning(answer, source_material):
@@ -2954,7 +2975,7 @@ def ollama_report_chat(payload):
         "model": OLLAMA_MODEL,
         "stream": False,
         "think": False,
-        "messages": [{"role": "system", "content": system}, *history, {"role": "user", "content": question}],
+        "messages": [{"role": "system", "content": system + recommendation_theme_instructions(question)}, *history, {"role": "user", "content": question}],
         "options": {"temperature": 0.1, "num_ctx": 16384, "num_predict": 1200},
         "keep_alive": "5m",
     }).encode("utf-8")
@@ -2970,8 +2991,49 @@ def ollama_report_chat(payload):
     return {"answer": answer, "model": OLLAMA_MODEL}
 
 
+def stream_grounded_recommendations(handler, payload):
+    report = str(payload.get("report") or "").strip()
+    evidence = str(payload.get("evidence") or "").strip()
+    if not report:
+        raise ValueError("Generate a report first")
+
+    def ask_model(messages):
+        body = json.dumps({
+            "model": OLLAMA_MODEL, "stream": False, "think": False, "format": "json",
+            "messages": messages,
+            "options": {"temperature": 0.1, "num_ctx": 4096, "num_predict": 256},
+            "keep_alive": "5m",
+        }).encode("utf-8")
+        request = Request(f"{OLLAMA_URL}/api/chat", data=body,
+                          headers={"Content-Type": "application/json"}, method="POST")
+        with urlopen(request, timeout=300) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        if result.get("done_reason") == "length":
+            raise ValueError("Model reached its output limit; draft was not accepted")
+        return str((result.get("message") or {}).get("content") or "")
+
+    handler.send_response(200)
+    handler.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+    handler.send_header("Cache-Control", "no-store")
+    handler.end_headers()
+    awake_guard = keep_display_awake_for_local_ai()
+    try:
+        for packet in draft_report(report, evidence, ask_model):
+            if "audit" in packet:
+                packet["coverage_check"] = format_audit(packet.pop("audit"))
+            packet["model"] = OLLAMA_MODEL
+            handler.wfile.write((json.dumps(packet, ensure_ascii=False) + "\n").encode("utf-8"))
+            handler.wfile.flush()
+    except (BrokenPipeError, ConnectionResetError):
+        return
+    finally:
+        restore_normal_power_state(awake_guard)
+
+
 def stream_ollama_report_chat(handler, payload):
     ensure_ollama_service()
+    if is_recommendation_request(payload.get("question", "")):
+        return stream_grounded_recommendations(handler, payload)
     report = str(payload.get("report") or "").strip()[:60000]
     evidence = str(payload.get("evidence") or "").strip()[:100000]
     question = str(payload.get("question") or "").strip()[:2000]
@@ -3216,16 +3278,10 @@ def stream_ollama_report_chat(handler, payload):
     elif recommendation_request:
         user_message = (
             f"{question}\n\n"
-            "MANDATORY RECOMMENDATION CONTRACT: Return a complete, deduplicated recommendation list and finish every "
-            "item. Order recommendations by urgency and implementation dependency. Use only findings explicitly present "
-            "in the supplied report or supporting evidence; do not invent missing functions, system limitations, "
-            "interoperability status, ownership conditions, or replacement capabilities. Do not combine findings from "
-            "different systems as though they apply to each named system. For each recommendation provide exactly: "
-            "Recommendation; Supporting finding(s); Evidence-to-action link; Priority (Critical, High, Medium, or Low). "
-            "Mark the action as Proposed when it was not explicitly recorded. Keep each item concise, merge genuine "
-            "duplicates, and include no more than eight recommendations. If evidence is incomplete or contradictory, "
-            "state the validation need rather than resolving it by assumption. Do not start an item that cannot be "
-            "completed. End with a one-sentence sequencing note and do not stop before that note."
+            "Follow the thematic recommendation structure. Retain each distinct issue within its relevant "
+            "theme or explicitly flag it as unresolved. Use evidence references, proposed practical actions "
+            "and monitoring measures. Do not invent urgency rankings or silently omit issues to meet the "
+            "theme limit. End with evidence limitations."
         )
     elif table_request:
         user_message = (
@@ -3251,7 +3307,7 @@ def stream_ollama_report_chat(handler, payload):
         "model": OLLAMA_MODEL,
         "stream": True,
         "think": False,
-        "messages": [{"role": "system", "content": system}, *history, {"role": "user", "content": user_message}],
+        "messages": [{"role": "system", "content": system + recommendation_theme_instructions(question)}, *history, {"role": "user", "content": user_message}],
         "options": {
             "temperature": 0.1,
             # The 4B local model becomes substantially slower and uses several

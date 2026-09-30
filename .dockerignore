@@ -5,6 +5,7 @@
 !server.py
 !surveillance_app.py
 !report_builder.py
+!recommendation_engine.py
 !standard_assessment_template.xlsx
 !static/
 !static/**

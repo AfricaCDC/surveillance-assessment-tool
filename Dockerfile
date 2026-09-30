@@ -9,7 +9,7 @@ RUN groupadd --gid 10001 app && useradd --uid 10001 --gid app --no-create-home a
     && mkdir /data && chown app:app /data
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-COPY server.py surveillance_app.py report_builder.py standard_assessment_template.xlsx ./
+COPY server.py surveillance_app.py report_builder.py recommendation_engine.py standard_assessment_template.xlsx ./
 COPY static/ ./static/
 
 USER 10001:10001
