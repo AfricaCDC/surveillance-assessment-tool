@@ -17,6 +17,8 @@ import threading
 import time
 import traceback
 import webbrowser
+import zipfile
+from xml.etree import ElementTree
 from recommendation_engine import draft_report, format_audit, is_recommendation_request
 from datetime import datetime, timedelta, timezone
 from http.cookies import SimpleCookie
@@ -88,7 +90,7 @@ STATIC_DIR = BUNDLE_DIR / "static"
 DB_PATH = Path(os.environ.get("AFRICA_CDC_DB_PATH", APP_DIR / "africa_cdc_web.db"))
 STANDARD_TEMPLATE_PATH = BUNDLE_DIR / "standard_assessment_template.xlsx"
 DEFAULT_REDCAP_API_URL = os.environ.get("AFRICA_CDC_REDCAP_API_URL", "https://tools.africacdc.org/africacdcrc/api/").strip()
-APP_VERSION = "1.0.40"
+APP_VERSION = "1.0.41"
 PROFILE_FORMAT_VERSION = 3
 OLLAMA_URL = os.environ.get("AFRICA_CDC_OLLAMA_URL", "http://127.0.0.1:11434").strip().rstrip("/")
 OLLAMA_MODEL = os.environ.get("AFRICA_CDC_OLLAMA_MODEL", "qwen3:4b-instruct").strip()
@@ -527,7 +529,7 @@ def _split_redcap_multi(value):
     return [part.strip() for part in str(value or "").split(";") if part.strip()]
 
 
-def pull_current_project_from_redcap(country_name=None, reporting_period=None, reset_group_accounts=False):
+def pull_current_project_from_redcap(country_name=None, reporting_period=None, reset_group_accounts=None):
     local_phase1 = profile_state().get("phase1") or {}
     country = str(country_name or local_phase1.get("country_name") or "").strip()
     reporting_period = str(reporting_period or local_phase1.get("reporting_period") or "").strip()
@@ -674,6 +676,10 @@ def pull_current_project_from_redcap(country_name=None, reporting_period=None, r
         },
         "accounts": [],
     }
+    # A refresh of this country keeps its group logins; a different country or
+    # period must not inherit them. False is reserved for locked report previews.
+    if reset_group_accounts is None:
+        reset_group_accounts = workspace_scope(local_phase1) != workspace_scope(phase1)
     restore_project(payload, reset_group_accounts=reset_group_accounts)
     capture_active_project()
     pulled_at = utc_now()
@@ -741,6 +747,10 @@ def initialize_database():
             db.execute("ALTER TABLE users ADD COLUMN group_id INTEGER")
         if "last_login_at" not in user_columns:
             db.execute("ALTER TABLE users ADD COLUMN last_login_at TEXT")
+        if "project_scope" not in user_columns:
+            # Older group accounts have no trustworthy country binding. They
+            # remain unusable until the coordinator issues current credentials.
+            db.execute("ALTER TABLE users ADD COLUMN project_scope TEXT")
         project_columns = {row[1] for row in db.execute("PRAGMA table_info(country_projects)")}
         if "redcap_record_id" not in project_columns:
             db.execute("ALTER TABLE country_projects ADD COLUMN redcap_record_id TEXT")
@@ -825,8 +835,10 @@ def validate_credentials(username, password, display_name=""):
     is_username = bool(re.fullmatch(r"[a-z0-9._-]{3,40}", username))
     if not (is_email or is_username) or len(username) > 100:
         raise ValueError("Enter a valid email address or a username using letters, numbers, dots, dashes or underscores")
-    if len(str(password or "")) < 6:
-        raise ValueError("Password must contain at least 6 characters")
+    if len(str(password or "")) < 15:
+        raise ValueError("New passwords must contain at least 15 characters")
+    if len(str(password)) > 1024:
+        raise ValueError("New passwords must contain at most 1,024 characters")
     if not re.search(r"[A-Z]", str(password)):
         raise ValueError("Password must contain at least one capital letter")
     if not re.search(r"[a-z]", str(password)):
@@ -840,6 +852,25 @@ def validate_credentials(username, password, display_name=""):
     return username, str(password), display_name or username
 
 
+def workspace_scope(phase1=None):
+    phase1 = profile_state()["phase1"] if phase1 is None else phase1
+    identity = [str(phase1.get(key) or "").strip().casefold()
+                for key in ("country_name", "reporting_period")]
+    if not all(identity):
+        return None
+    return hashlib.sha256(json.dumps(identity, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def clerk_workspace_matches(user):
+    if user.get("role") in {"admin", "coordinator"}:
+        return True
+    scope = workspace_scope()
+    return (user.get("role") == "clerk"
+            and user.get("phase") in {"inventory", "profiling", "gap"}
+            and bool(user.get("group_id")) and bool(scope)
+            and hmac.compare_digest(str(user.get("project_scope") or ""), scope))
+
+
 def session_user(cookie_header):
     cookie = SimpleCookie(); cookie.load(cookie_header or "")
     morsel = cookie.get("africa_cdc_session")
@@ -850,11 +881,11 @@ def session_user(cookie_header):
     with connect() as db:
         db.execute("DELETE FROM sessions WHERE expires_at<=?", (now,))
         row = db.execute("""
-            SELECT u.id,u.username,u.display_name,u.role,u.phase,u.group_id,u.last_login_at FROM sessions s
+            SELECT u.id,u.username,u.display_name,u.role,u.phase,u.group_id,u.last_login_at,u.project_scope FROM sessions s
             JOIN users u ON u.id=s.user_id
             WHERE s.token_hash=? AND s.expires_at>? AND u.active=1
         """, (token_hash, now)).fetchone()
-    return dict(row) if row else None
+        return dict(row) if row and clerk_workspace_matches(dict(row)) else None
 
 
 def new_session(user_id):
@@ -872,7 +903,7 @@ def username_slug(value):
 
 
 def generated_password():
-    # Seven characters, while retaining every password class required by setup.
+    # New credentials are longer; existing password hashes are left untouched.
     characters = [
         secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ"),
         secrets.choice("abcdefghijkmnopqrstuvwxyz"),
@@ -882,6 +913,7 @@ def generated_password():
         secrets.choice("23456789"),
         secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ"),
     ]
+    characters.extend(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%") for _ in range(9))
     secrets.SystemRandom().shuffle(characters)
     return "".join(characters)
 
@@ -998,7 +1030,10 @@ def ensure_group_account(assessment_id, phase, group_id):
     if phase not in {"inventory", "profiling", "gap"}:
         raise ValueError("Unknown assessment phase")
     with connect() as db:
-        existing = db.execute("SELECT id,username FROM users WHERE phase=? AND group_id=? AND active=1", (phase, group_id)).fetchone()
+        scope = workspace_scope()
+        if not scope:
+            raise ValueError("Select a country and reporting period before creating group credentials")
+        existing = db.execute("SELECT id,username FROM users WHERE role='clerk' AND phase=? AND group_id=? AND project_scope=? AND active=1", (phase, group_id, scope)).fetchone()
         if existing:
             return None
         group = db.execute("SELECT name FROM groups WHERE id=? AND assessment_id=?", (group_id, assessment_id)).fetchone()
@@ -1013,8 +1048,8 @@ def ensure_group_account(assessment_id, phase, group_id):
             username = f"{base[:7-len(suffix_text)]}{suffix_text}"
         password = generated_password()
         db.execute(
-            "INSERT INTO users(username,display_name,password_hash,role,active,created_at,phase,group_id) VALUES(?,?,?,?,1,?,?,?)",
-            (username, f"{group['name']} — {phase.title()}", password_digest(password), "clerk", utc_now(), phase, group_id),
+            "INSERT INTO users(username,display_name,password_hash,role,active,created_at,phase,group_id,project_scope) VALUES(?,?,?,?,1,?,?,?,?)",
+            (username, f"{group['name']} — {phase.title()}", password_digest(password), "clerk", utc_now(), phase, group_id, scope),
         )
     return {"username": username, "password": password, "phase": phase, "group_name": group["name"], "country": country}
 
@@ -1023,10 +1058,13 @@ def reset_group_account(assessment_id, phase, group_id):
     if phase not in {"inventory", "profiling", "gap"}:
         raise ValueError("Unknown assessment phase")
     with connect() as db:
+        scope = workspace_scope()
+        if not scope:
+            raise ValueError("Select a country and reporting period before creating group credentials")
         group = db.execute("SELECT name FROM groups WHERE id=? AND assessment_id=?", (group_id, assessment_id)).fetchone()
         if not group:
             raise ValueError("Participant group not found")
-        existing = db.execute("SELECT id FROM users WHERE phase=? AND group_id=?", (phase, group_id)).fetchone()
+        existing = db.execute("SELECT id FROM users WHERE role='clerk' AND phase=? AND group_id=? ORDER BY (project_scope=?) DESC,id LIMIT 1", (phase, group_id, scope)).fetchone()
         country = profile_state()["phase1"].get("country_name") or "country"
         base = short_group_username(country, phase, group["name"], group_id)
         username, suffix = base, 1
@@ -1037,11 +1075,11 @@ def reset_group_account(assessment_id, phase, group_id):
         password = generated_password()
         if existing:
             db.execute("DELETE FROM sessions WHERE user_id=?", (existing["id"],))
-            db.execute("UPDATE users SET username=?,password_hash=?,active=1,last_login_at=NULL WHERE id=?", (username, password_digest(password), existing["id"]))
+            db.execute("UPDATE users SET username=?,password_hash=?,active=1,last_login_at=NULL,project_scope=? WHERE id=?", (username, password_digest(password), scope, existing["id"]))
         else:
             db.execute(
-                "INSERT INTO users(username,display_name,password_hash,role,active,created_at,phase,group_id) VALUES(?,?,?,?,1,?,?,?)",
-                (username, f"{group['name']} — {phase.title()}", password_digest(password), "clerk", utc_now(), phase, group_id),
+                "INSERT INTO users(username,display_name,password_hash,role,active,created_at,phase,group_id,project_scope) VALUES(?,?,?,?,1,?,?,?,?)",
+                (username, f"{group['name']} — {phase.title()}", password_digest(password), "clerk", utc_now(), phase, group_id, scope),
             )
     capture_active_project()
     return {"username": username, "password": password, "phase": phase, "group_name": group["name"], "country": country}
@@ -1217,7 +1255,7 @@ def save_profile_phase(phase, payload):
     return profile_state()
 
 
-def save_inventory_tool(payload):
+def save_inventory_tool(payload, user=None):
     tool = dict(payload.get("tool") or {})
     tool_id = str(tool.get("_id") or payload.get("tool_id") or "").strip()
     if not tool_id:
@@ -1228,20 +1266,33 @@ def save_inventory_tool(payload):
     except (TypeError, ValueError):
         raise ValueError("A valid working group is required")
     with connect() as db:
+        clerk = user is not None and user.get("role") not in {"admin", "coordinator"}
+        if clerk:
+            if user.get("phase") != "inventory" or not clerk_workspace_matches(user):
+                raise PermissionError("This group account cannot edit this country assessment")
+            group_id = user["group_id"]
         assessment_id = db.execute("SELECT id FROM assessments ORDER BY id LIMIT 1").fetchone()[0]
         owner = db.execute("SELECT group_id FROM inventory_tool_assignments WHERE assessment_id=? AND tool_id=?", (assessment_id, tool_id)).fetchone()
+        if clerk and (not owner or owner[0] != group_id):
+            raise PermissionError("This inventory tool is not assigned to your group")
         if owner and group_id is not None and group_id != owner[0]:
             raise PermissionError("This inventory tool is assigned to another group")
         row = db.execute("SELECT payload FROM profile_data WHERE phase='phase1'").fetchone()
         phase1 = ensure_inventory_tool_ids(json.loads(row[0]) if row else {})
         tools = phase1.get("tools", [])
         index = next((i for i, item in enumerate(tools) if item.get("_id") == tool_id), None)
+        if clerk:
+            if index is None:
+                raise PermissionError("This inventory tool is not available to your group")
+            for key in ("country_name", "reporting_period", "comments"):
+                if key in payload and str(payload.get(key) or "").strip() != str(phase1.get(key) or "").strip():
+                    raise PermissionError("Only a coordinator can change shared assessment details")
         if index is None:
             tools.append(tool)
         else:
             tools[index] = tool
         for key in ("country_name", "reporting_period", "comments"):
-            if key in payload:
+            if key in payload and not clerk:
                 phase1[key] = str(payload.get(key) or "")
         db.execute(
             "INSERT INTO profile_data(phase,payload,updated_at) VALUES('phase1',?,?) "
@@ -1251,7 +1302,7 @@ def save_inventory_tool(payload):
     return profile_state()
 
 
-def save_profiling_tool(payload):
+def save_profiling_tool(payload, user=None):
     profile = dict(payload.get("profile") or {})
     tool_id = str(profile.get("_tool_id") or payload.get("tool_id") or "").strip()
     if not tool_id:
@@ -1262,8 +1313,17 @@ def save_profiling_tool(payload):
     except (TypeError, ValueError):
         raise ValueError("A valid working group is required")
     with connect() as db:
+        clerk = user is not None and user.get("role") not in {"admin", "coordinator"}
+        if clerk:
+            if user.get("phase") != "profiling" or not clerk_workspace_matches(user):
+                raise PermissionError("This group account cannot edit this country assessment")
+            group_id = user["group_id"]
         assessment_id = db.execute("SELECT id FROM assessments ORDER BY id LIMIT 1").fetchone()[0]
         owner = db.execute("SELECT group_id FROM profiling_tool_assignments WHERE assessment_id=? AND tool_id=?", (assessment_id, tool_id)).fetchone()
+        if clerk and (not owner or owner[0] != group_id):
+            raise PermissionError("This profiling system is not assigned to your group")
+        if clerk and not any(item.get("_id") == tool_id for item in profile_state()["phase1"].get("tools", [])):
+            raise PermissionError("This profiling system is not available to your group")
         if owner and group_id is not None and group_id != owner[0]:
             raise PermissionError("This profiling system is assigned to another group")
         row = db.execute("SELECT payload FROM profile_data WHERE phase='phase2'").fetchone()
@@ -1405,10 +1465,11 @@ def create_country_project(country_name, reporting_period, open_existing=False):
                 existing = db.execute(
                     "SELECT id,redcap_record_id,payload FROM country_projects WHERE id=?", (existing["id"],)
                 ).fetchone()
-                db.execute("UPDATE app_settings SET value=? WHERE key='active_project_id'", (str(existing["id"]),))
             if str(existing["redcap_record_id"] or "").strip():
                 pull_current_project_from_redcap(country_name, reporting_period)
             else:
+                with connect() as db:
+                    db.execute("UPDATE app_settings SET value=? WHERE key='active_project_id'", (str(existing["id"]),))
                 payload = json.loads(existing["payload"] or "{}")
                 restore_project(payload or blank_project_payload(country_name, reporting_period))
             result = country_projects_state()
@@ -1447,7 +1508,8 @@ def switch_country_project(project_id):
     with connect() as db:
         row = db.execute("SELECT country_name,reporting_period FROM country_projects WHERE id=?", (project_id,)).fetchone()
         if not row: raise ValueError("Country assessment not found")
-        db.execute("UPDATE app_settings SET value=? WHERE key='active_project_id'", (str(project_id),))
+    # The loader captures the current workspace before selecting the target.
+    # Updating the active ID here would attach the old data to the new country.
     pull_current_project_from_redcap(row["country_name"], row["reporting_period"])
     return country_projects_state()
 
@@ -1760,8 +1822,7 @@ def parse_excel_files(files):
         raise RuntimeError("openpyxl is required for Excel import")
     imported = {}
     for file_data in files:
-        payload = file_data.get("data", "").split(",", 1)[-1]
-        workbook = openpyxl.load_workbook(io.BytesIO(base64.b64decode(payload)), data_only=True)
+        workbook = workbook_from_upload(file_data)
         for sheet in workbook.worksheets:
             standard_gap = STANDARD_GAP_SHEETS.get(sheet.title.strip().casefold())
             indexes = None
@@ -2003,11 +2064,106 @@ def parse_phase2_workbook(workbook, phase1):
     return phase1, assessments
 
 
+EXCEL_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+EXCEL_MAX_EXPANDED_BYTES = 50 * 1024 * 1024
+EXCEL_MAX_ZIP_ENTRIES = 2000
+EXCEL_MAX_SHEETS = 100
+EXCEL_MAX_ROWS = 10000
+EXCEL_MAX_COLUMNS = 100
+EXCEL_MAX_CELLS = 1000000
+EXCEL_MAX_XML_ELEMENTS = 1000000
+
+
+def _check_excel_archive(data):
+    """Bound ZIP/XML expansion and sheet geometry before openpyxl allocates cells."""
+    def check_range(reference):
+        try:
+            _, _, max_column, max_row = openpyxl.utils.range_boundaries(reference)
+        except (TypeError, ValueError):
+            raise ValueError("The Excel workbook contains an invalid cell range") from None
+        if not max_column or not max_row or max_column > EXCEL_MAX_COLUMNS or max_row > EXCEL_MAX_ROWS:
+            raise ValueError("Excel sheets may contain at most 10,000 rows and 100 columns")
+        return max_row, max_column
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            entries = archive.infolist()
+            if len(entries) > EXCEL_MAX_ZIP_ENTRIES or sum(item.file_size for item in entries) > EXCEL_MAX_EXPANDED_BYTES:
+                raise ValueError("The Excel workbook expands beyond the supported import size (50 MiB)")
+            if len({item.filename for item in entries}) != len(entries):
+                raise ValueError("The Excel workbook contains duplicate archive entries")
+            total_elements = total_cells = worksheet_count = 0
+            for item in entries:
+                if item.flag_bits & 1:
+                    raise ValueError("Password-protected Excel files cannot be imported")
+                # Inspect every XML part, including worksheet parts named by relationships.
+                with archive.open(item) as source:
+                    part = source.read(EXCEL_MAX_EXPANDED_BYTES + 1)
+                if len(part) > EXCEL_MAX_EXPANDED_BYTES:
+                    raise ValueError("The Excel workbook expands beyond the supported import size (50 MiB)")
+                xml_prefix = part[:200].replace(b"\x00", b"").lstrip()
+                if not item.filename.lower().endswith((".xml", ".rels")) and not xml_prefix.startswith(b"<"):
+                    continue
+                if re.search(br"<!\s*(?:DOCTYPE|ENTITY)\b", part.replace(b"\x00", b""), re.I):
+                    raise ValueError("XML document types and entities are not supported in Excel imports")
+                sheet_rows = sheet_columns = row_index = column_index = 0
+                worksheet = False
+                for event, element in ElementTree.iterparse(io.BytesIO(part), events=("start", "end")):
+                    if event == "end":
+                        element.clear()
+                        continue
+                    total_elements += 1
+                    if total_elements > EXCEL_MAX_XML_ELEMENTS:
+                        raise ValueError("The Excel workbook contains too many XML elements")
+                    tag = element.tag.rsplit("}", 1)[-1]
+                    if tag == "worksheet":
+                        worksheet = True
+                        worksheet_count += 1
+                        if worksheet_count > EXCEL_MAX_SHEETS:
+                            raise ValueError("Excel imports support at most 100 worksheets")
+                    if not worksheet:
+                        continue
+                    if tag in {"dimension", "mergeCell"} and element.get("ref"):
+                        rows, columns = check_range(element.get("ref"))
+                        sheet_rows, sheet_columns = max(sheet_rows, rows), max(sheet_columns, columns)
+                    elif tag == "row":
+                        row_index = int(element.get("r", row_index + 1))
+                        if not 1 <= row_index <= EXCEL_MAX_ROWS:
+                            raise ValueError("Excel sheets may contain at most 10,000 rows")
+                        sheet_rows, column_index = max(sheet_rows, row_index), 0
+                    elif tag == "c":
+                        if element.get("r"):
+                            rows, column_index = check_range(element.get("r"))
+                        else:
+                            rows, column_index = row_index or 1, column_index + 1
+                        if column_index > EXCEL_MAX_COLUMNS:
+                            raise ValueError("Excel sheets may contain at most 100 columns")
+                        sheet_rows, sheet_columns = max(sheet_rows, rows), max(sheet_columns, column_index)
+                total_cells += sheet_rows * sheet_columns
+                if total_cells > EXCEL_MAX_CELLS:
+                    raise ValueError("The Excel workbook contains too many cells (maximum 1,000,000 including blank ranges)")
+    except (zipfile.BadZipFile, ElementTree.ParseError, RuntimeError, NotImplementedError) as exc:
+        raise ValueError("The uploaded file is not a supported, readable Excel workbook") from exc
+
+
 def workbook_from_upload(file_data):
     if openpyxl is None:
         raise RuntimeError("openpyxl is required for Excel import")
-    payload = file_data.get("data", "").split(",", 1)[-1]
-    return openpyxl.load_workbook(io.BytesIO(base64.b64decode(payload)), data_only=True)
+    payload = file_data.get("data", "")
+    if not isinstance(payload, str):
+        raise ValueError("The Excel upload must contain base64 file data")
+    # Bound allocation before splitting a data URL or decoding its base64 payload.
+    if len(payload) > 4 * ((EXCEL_MAX_UPLOAD_BYTES + 2) // 3) + 200:
+        raise ValueError("Excel files must be 10 MiB or smaller")
+    payload = payload.split(",", 1)[-1]
+    try:
+        data = base64.b64decode(payload, validate=True)
+    except (ValueError, base64.binascii.Error) as exc:
+        raise ValueError("The Excel upload contains invalid base64 file data") from exc
+    if len(data) > EXCEL_MAX_UPLOAD_BYTES:
+        raise ValueError("Excel files must be 10 MiB or smaller")
+    _check_excel_archive(data)
+    return openpyxl.load_workbook(io.BytesIO(data), data_only=True, keep_links=False)
 
 
 def validate_standardized_excel(file_data):
@@ -2238,6 +2394,21 @@ def import_phase2_excel(file_data):
     return save_profile_phase("phase2", assessments)
 
 
+def _set_excel_value(cell, value):
+    """Write assessment text literally, without Excel formula interpretation."""
+    cell.value = value
+    if isinstance(value, str):
+        cell.data_type = "s"
+
+
+def _append_excel_values(sheet, values):
+    # These generated rows contain labels/data only, never template formulas.
+    sheet.append(values)
+    for cell in sheet[sheet.max_row]:
+        if isinstance(cell.value, str):
+            cell.data_type = "s"
+
+
 def export_workbook():
     if openpyxl is None:
         raise RuntimeError("openpyxl is required for Excel export")
@@ -2249,11 +2420,11 @@ def export_workbook():
     summary.append(["Gap Analysis — Gaps and Recommendations"])
     for section in report["sections"]:
         summary.append([])
-        summary.append([section["domain"], section["group"]])
+        _append_excel_values(summary, [section["domain"], section["group"]])
         summary.append(["Gaps", "Recommendations"])
         length = max(len(section["gaps"]), len(section["recommendations"]), 1)
         for i in range(length):
-            summary.append([section["gaps"][i] if i < len(section["gaps"]) else "", section["recommendations"][i] if i < len(section["recommendations"]) else ""])
+            _append_excel_values(summary, [section["gaps"][i] if i < len(section["gaps"]) else "", section["recommendations"][i] if i < len(section["recommendations"]) else ""])
     detail = workbook.create_sheet("Responses")
     detail.append(["Domain", "Question ID", "Question", "Group", "Response", "Explanation", "Comment / Gap / Recommendation", "Updated"])
     response_map = {item["question_id"]: item for item in state["responses"]}
@@ -2261,21 +2432,21 @@ def export_workbook():
     for domain in DOMAINS:
         for question in domain["questions"]:
             response = response_map.get(question["id"], {})
-            detail.append([domain["name"], question.get("source_id", question["id"]).upper(), question["text"], assignment_map.get(domain["id"], {}).get("group_name", ""), response.get("response", ""), response.get("explanation", ""), response.get("comment", ""), response.get("updated_at", "")])
+            _append_excel_values(detail, [domain["name"], question.get("source_id", question["id"]).upper(), question["text"], assignment_map.get(domain["id"], {}).get("group_name", ""), response.get("response", ""), response.get("explanation", ""), response.get("comment", ""), response.get("updated_at", "")])
     profile = profile_state()
     phase1 = workbook.create_sheet("Inventory")
-    phase1.append(["Country", profile["phase1"].get("country_name", ""), "Reporting Period", profile["phase1"].get("reporting_period", "")])
+    _append_excel_values(phase1, ["Country", profile["phase1"].get("country_name", ""), "Reporting Period", profile["phase1"].get("reporting_period", "")])
     tool_headers = ["Tool / System Name", "Unit Responsible", "Type of System", "Surveillance Functions", "Geographical Coverage", "Point of Data Entry", "Data Captured", "Information Users", "Technology", "Has API", "Linked Systems", "Comments"]
     tool_keys = ["inventory_name", "unit_responsible", "system_type", "surveillance_functions", "geographical_coverage", "point_of_data_entry", "data_captured", "information_users", "technology", "has_api", "linked_to_other_systems", "comments"]
     phase1.append(tool_headers)
     for tool in profile["phase1"].get("tools", []):
-        phase1.append(["; ".join(tool.get(key, [])) if isinstance(tool.get(key), list) else tool.get(key, "") for key in tool_keys])
+        _append_excel_values(phase1, ["; ".join(tool.get(key, [])) if isinstance(tool.get(key), list) else tool.get(key, "") for key in tool_keys])
     phase2 = workbook.create_sheet("Profiling")
     assessments = profile.get("phase2", [])
     phase2_keys = list(dict.fromkeys(key for item in assessments for key in item.keys()))
-    phase2.append([key.replace("_", " ").title() for key in phase2_keys])
+    _append_excel_values(phase2, [key.replace("_", " ").title() for key in phase2_keys])
     for assessment in assessments:
-        phase2.append(["; ".join(assessment.get(key, [])) if isinstance(assessment.get(key), list) else assessment.get(key, "") for key in phase2_keys])
+        _append_excel_values(phase2, ["; ".join(assessment.get(key, [])) if isinstance(assessment.get(key), list) else assessment.get(key, "") for key in phase2_keys])
     for sheet in workbook.worksheets:
         sheet.freeze_panes = "A2"
         for cell in sheet[1]:
@@ -2301,7 +2472,7 @@ def export_profile_workbook(phase):
         keys = ["inventory_name", "unit_responsible", "system_type", "surveillance_functions", "geographical_coverage", "point_of_data_entry", "data_captured", "information_users", "technology", "has_api", "linked_to_other_systems", "comments"]
         for tool in profile["phase1"].get("tools", []):
             values = ["; ".join(tool.get(k, [])) if isinstance(tool.get(k), list) else tool.get(k, "") for k in keys]
-            sheet.append([profile["phase1"].get("country_name", ""), profile["phase1"].get("reporting_period", ""), *values])
+            _append_excel_values(sheet, [profile["phase1"].get("country_name", ""), profile["phase1"].get("reporting_period", ""), *values])
     else:
         assessments = profile.get("phase2", [])
         for index, assessment in enumerate(assessments or [{}]):
@@ -2311,7 +2482,7 @@ def export_profile_workbook(phase):
             for row_index, (key, value) in enumerate(assessment.items()):
                 if key == "official_name": continue
                 is_multi = isinstance(value, list)
-                sheet.append([row_index, "", "", key.replace("_", " ").title(), "Multi-select" if is_multi else "Text", "", ", ".join(value) if is_multi else value, ""])
+                _append_excel_values(sheet, [row_index, "", "", key.replace("_", " ").title(), "Multi-select" if is_multi else "Text", "", ", ".join(value) if is_multi else value, ""])
     for sheet in workbook.worksheets:
         sheet.freeze_panes = "A2"
         for cell in sheet[1]:
@@ -2327,11 +2498,11 @@ def export_phase3_workbook():
     state, summary = current_state(), report_data()
     workbook = openpyxl.Workbook()
     overview = workbook.active; overview.title = "Gap Analysis Summary"
-    overview.append(["Gap Analysis", state["assessment"].get("title", "")])
-    overview.append(["Scope", state["assessment"].get("scope", "")])
+    _append_excel_values(overview, ["Gap Analysis", state["assessment"].get("title", "")])
+    _append_excel_values(overview, ["Scope", state["assessment"].get("scope", "")])
     overview.append([]); overview.append(["Domain", "Participant Group", "Gaps / Other Findings", "Recommendations"])
     for item in summary["sections"]:
-        overview.append([item["domain"], item["group"], "\n".join(item["gaps"] + item["other"]), "\n".join(item["recommendations"])])
+        _append_excel_values(overview, [item["domain"], item["group"], "\n".join(item["gaps"] + item["other"]), "\n".join(item["recommendations"])])
     details = workbook.create_sheet("Gap Analysis Responses")
     details.append(["Domain", "Question ID", "Question", "Participant Group", "Response", "Explanation", "Comment / Gap / Recommendation", "Last Updated"])
     assignments = {item["domain_id"]: item for item in state["assignments"]}
@@ -2345,7 +2516,7 @@ def export_phase3_workbook():
                 parsed = json.loads(value)
                 if isinstance(parsed, list): value = "; ".join(map(str, parsed))
             except (TypeError, ValueError): pass
-            details.append([domain["name"], question.get("source_id", question["id"]).upper(), question["text"], group, value, response.get("explanation", ""), response.get("comment", ""), response.get("updated_at", "")])
+            _append_excel_values(details, [domain["name"], question.get("source_id", question["id"]).upper(), question["text"], group, value, response.get("explanation", ""), response.get("comment", ""), response.get("updated_at", "")])
     for sheet in workbook.worksheets:
         header_row = 4 if sheet.title == "Gap Analysis Summary" else 1
         sheet.freeze_panes = f"A{header_row + 1}"
@@ -2399,7 +2570,7 @@ def roundtrip_workbook(phases=(1, 2, 3)):
         tools = profile["phase1"].get("tools", []) or [{}]
         for tool in tools:
             values = ["; ".join(map(str, tool.get(key, []))) if isinstance(tool.get(key), list) else tool.get(key, "") for key in keys]
-            sheet.append([profile["phase1"].get("country_name", ""), profile["phase1"].get("reporting_period", ""), profile["phase1"].get("comments", ""), *values])
+            _append_excel_values(sheet, [profile["phase1"].get("country_name", ""), profile["phase1"].get("reporting_period", ""), profile["phase1"].get("comments", ""), *values])
     if 2 in phases:
         saved_assessments = profile.get("phase2", [])
         inventory_tools = [tool for tool in profile["phase1"].get("tools", []) if str(tool.get("inventory_name") or "").strip()]
@@ -2428,7 +2599,7 @@ def roundtrip_workbook(phases=(1, 2, 3)):
                 comments = (assessment.get("field_comments") or {}).get(key, "")
                 if key == "data_exchange" and not comments:
                     comments = assessment.get("exchange_comments", "")
-                sheet.append([row_index, "", source_id, key.replace("_", " ").title(), "Multi-select" if is_multi else "Text", "", "; ".join(map(str, value)) if isinstance(value, list) else value, comments])
+                _append_excel_values(sheet, [row_index, "", source_id, key.replace("_", " ").title(), "Multi-select" if is_multi else "Text", "", "; ".join(map(str, value)) if isinstance(value, list) else value, comments])
     if 3 in phases:
         sheet = workbook.create_sheet("Gap Analysis Responses")
         sheet.append(["Domain", "Question ID", "Question", "Participant Group", "Response", "Explanation", "Comments", "Last Updated"]); header_rows[sheet.title] = 1
@@ -2441,11 +2612,11 @@ def roundtrip_workbook(phases=(1, 2, 3)):
                     parsed = json.loads(value)
                     if isinstance(parsed, list): value = "; ".join(map(str, parsed))
                 except (TypeError, ValueError): pass
-                sheet.append([domain["name"], question.get("source_id", question["id"]).upper(), question["text"], group, value, response.get("explanation", ""), response.get("comment", ""), response.get("updated_at", "")])
+                _append_excel_values(sheet, [domain["name"], question.get("source_id", question["id"]).upper(), question["text"], group, value, response.get("explanation", ""), response.get("comment", ""), response.get("updated_at", "")])
         summary_sheet = workbook.create_sheet("Gap Analysis Summary")
         summary_sheet.append(["Domain", "Participant Group", "Gaps / Other Findings", "Recommendations"]); header_rows[summary_sheet.title] = 1
         for item in summary["sections"]:
-            summary_sheet.append([item["domain"], item["group"], "\n".join(item["gaps"] + item["other"]), "\n".join(item["recommendations"])])
+            _append_excel_values(summary_sheet, [item["domain"], item["group"], "\n".join(item["gaps"] + item["other"]), "\n".join(item["recommendations"])])
     _style_roundtrip_workbook(workbook, header_rows)
     output = io.BytesIO(); workbook.save(output); return output.getvalue()
 
@@ -2486,13 +2657,13 @@ def standard_format_workbook(phases=(1, 2, 3)):
             workbook.remove(sheet)
 
     if 1 in phases:
-        inventory["B1"] = profile["phase1"].get("country_name", "")
-        inventory["D1"] = profile["phase1"].get("reporting_period", "")
+        _set_excel_value(inventory["B1"], profile["phase1"].get("country_name", ""))
+        _set_excel_value(inventory["D1"], profile["phase1"].get("reporting_period", ""))
         for row in inventory.iter_rows(min_row=3, max_row=inventory.max_row, min_col=1, max_col=12):
             for cell in row: cell.value = None
         keys = ["inventory_name", "unit_responsible", "system_type", "surveillance_functions", "geographical_coverage", "point_of_data_entry", "data_captured", "information_users", "technology", "has_api", "linked_to_other_systems", "comments"]
         for row_index, tool in enumerate(profile["phase1"].get("tools", []), 3):
-            for column, key in enumerate(keys, 1): inventory.cell(row_index, column, _display_excel_value(tool.get(key)))
+            for column, key in enumerate(keys, 1): _set_excel_value(inventory.cell(row_index, column), _display_excel_value(tool.get(key)))
     else:
         workbook.remove(inventory)
 
@@ -2513,11 +2684,11 @@ def standard_format_workbook(phases=(1, 2, 3)):
                 key = PROFILE_ID_MAP.get(source_id)
                 if not key: continue
                 value = assessment.get(key, tool.get("inventory_name", "") if source_id == "A1" else "")
-                sheet.cell(row_index, 6, _display_excel_value(value))
+                _set_excel_value(sheet.cell(row_index, 6), _display_excel_value(value))
                 comments = (assessment.get("field_comments") or {}).get(key, "")
                 if source_id == "G7" and not comments:
                     comments = assessment.get("exchange_comments", "")
-                sheet.cell(row_index, 7, comments)
+                _set_excel_value(sheet.cell(row_index, 7), comments)
         template.sheet_state = "hidden"
     else:
         workbook.remove(template)
@@ -2544,7 +2715,7 @@ def standard_format_workbook(phases=(1, 2, 3)):
                 explanation = str(response.get("explanation") or "").strip()
                 if explanation: value = f"{value}\nExplanation: {explanation}".strip()
                 gap, recommendation = _split_gap_comment(response.get("comment", ""))
-                sheet.cell(row_index, 5, value); sheet.cell(row_index, 6, gap); sheet.cell(row_index, 7, recommendation)
+                _set_excel_value(sheet.cell(row_index, 5), value); _set_excel_value(sheet.cell(row_index, 6), gap); _set_excel_value(sheet.cell(row_index, 7), recommendation)
     else:
         for sheet in list(workbook.worksheets):
             if sheet.title.strip().casefold() in standard_gap_names: workbook.remove(sheet)
@@ -3530,18 +3701,122 @@ def assistant_answer_docx(payload):
     output = io.BytesIO(); document.save(output); return output.getvalue()
 
 
+class RequestRejected(ValueError):
+    def __init__(self, message, status=400):
+        super().__init__(message)
+        self.status = status
+
+
+class LoginAttemptLimiter:
+    """Bounded, process-local limits; expired windows never lock accounts forever."""
+
+    WINDOW_SECONDS = 60
+    PAIR_LIMIT = 8
+    ACCOUNT_LIMIT = 10
+    PEER_LIMIT = 60
+    MAX_BUCKETS = 10000
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.buckets = {}
+
+    def allow(self, peer, username):
+        now = time.monotonic()
+        account = hashlib.sha256(username.encode("utf-8")).hexdigest()
+        limits = ((('pair', peer, account), self.PAIR_LIMIT),
+                  (('account', account), self.ACCOUNT_LIMIT),
+                  (('peer', peer), self.PEER_LIMIT))
+        with self.lock:
+            self.buckets = {key: item for key, item in self.buckets.items() if item[0] > now}
+            retry = max((int(self.buckets[key][0] - now) + 1
+                         for key, limit in limits
+                         if key in self.buckets and self.buckets[key][1] >= limit), default=0)
+            if retry:
+                return retry
+            if len(self.buckets) + sum(key not in self.buckets for key, _ in limits) > self.MAX_BUCKETS:
+                return self.WINDOW_SECONDS
+            for key, _ in limits:
+                expires, count = self.buckets.get(key, (now + self.WINDOW_SECONDS, 0))
+                self.buckets[key] = (expires, count + 1)
+        return 0
+
+
 class ExclusiveThreadingHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = False
+    MAX_REQUESTS = 32
+
+    def __init__(self, *args, **kwargs):
+        self.request_slots = threading.BoundedSemaphore(self.MAX_REQUESTS)
+        self.password_slots = threading.BoundedSemaphore(2)
+        self.login_attempts = LoginAttemptLimiter()
+        super().__init__(*args, **kwargs)
 
     def server_bind(self):
         if os.name == "nt":
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         super().server_bind()
 
+    def process_request(self, request, client_address):
+        if not self.request_slots.acquire(blocking=False):
+            try:
+                request.settimeout(1)
+                body = b'{"error":"The server is busy. Please retry shortly."}'
+                response = ("HTTP/1.0 503 Service Unavailable\r\n"
+                            "Content-Type: application/json; charset=utf-8\r\n"
+                            "Retry-After: 5\r\nConnection: close\r\n"
+                            f"Content-Length: {len(body)}\r\n\r\n").encode("ascii")
+                request.sendall(response + body)
+            except OSError:
+                pass
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self.request_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.request_slots.release()
+
 
 class Handler(SimpleHTTPRequestHandler):
+    MAX_JSON_BYTES = 16 * 1024 * 1024
+    REQUEST_READ_SECONDS = 30.0
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
+
+    def setup(self):
+        super().setup()
+        # A socket I/O timeout does not limit the duration of report generation.
+        self.connection.settimeout(self.REQUEST_READ_SECONDS)
+
+    def handle_one_request(self):
+        # A per-read timeout alone permits indefinitely trickled request headers.
+        # Stop only header reads here; body reads have their own absolute deadline.
+        def expire_headers():
+            try:
+                self.connection.shutdown(socket.SHUT_RD)
+            except OSError:
+                pass
+        self.header_deadline = threading.Timer(self.REQUEST_READ_SECONDS, expire_headers)
+        self.header_deadline.daemon = True
+        self.header_deadline.start()
+        try:
+            return super().handle_one_request()
+        finally:
+            self.header_deadline.cancel()
+
+    def parse_request(self):
+        try:
+            return super().parse_request()
+        finally:
+            self.header_deadline.cancel()
 
     def end_headers(self):
         # The app is frequently updated in place; never let the browser retain
@@ -3549,12 +3824,32 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "same-origin")
+        # The only inline script is the existing Print / Save PDF handler.
+        print_hash = base64.b64encode(hashlib.sha256(b"window.print()").digest()).decode("ascii")
+        self.send_header("Content-Security-Policy", (
+            "default-src 'self'; "
+            f"script-src 'self' 'unsafe-hashes' 'sha256-{print_hash}'; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+            "font-src 'self'; connect-src 'self'; object-src 'none'; "
+            "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+        ))
         super().end_headers()
 
     def log_message(self, fmt, *args):
         print(f"[{self.log_date_time_string()}] {fmt % args}")
 
-    def json_response(self, payload, status=200):
+    def write_body(self, data):
+        if self.command != "HEAD":
+            self.wfile.write(data)
+
+    def copyfile(self, source, outputfile):
+        if self.command != "HEAD":
+            super().copyfile(source, outputfile)
+
+    def json_response(self, payload, status=200, extra_headers=None):
         if status < 400 and getattr(self, "sync_workspace_on_success", False):
             self.sync_workspace_on_success = False
             try:
@@ -3575,12 +3870,113 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        for key, value in (extra_headers or {}).items():
+            self.send_header(key, str(value))
         self.end_headers()
-        self.wfile.write(data)
+        self.write_body(data)
 
     def body(self):
-        length = int(self.headers.get("Content-Length", "0"))
-        return json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+        if self.headers.get_all("Transfer-Encoding"):
+            raise RequestRejected("Transfer-Encoding is not supported")
+        lengths = self.headers.get_all("Content-Length", [])
+        if not lengths:
+            raise RequestRejected("Content-Length is required", 411)
+        if len(lengths) != 1 or not re.fullmatch(r"[0-9]{1,10}", lengths[0].strip()):
+            raise RequestRejected("Invalid Content-Length")
+        length = int(lengths[0])
+        if length > self.MAX_JSON_BYTES:
+            raise RequestRejected("Request exceeds the 16 MiB JSON upload limit", 413)
+        content_types = self.headers.get_all("Content-Type", [])
+        if len(content_types) != 1 or content_types[0].split(";", 1)[0].strip().lower() != "application/json":
+            raise RequestRejected("Content-Type must be application/json", 415)
+        deadline = time.monotonic() + self.REQUEST_READ_SECONDS
+        data = bytearray()
+        try:
+            while len(data) < length:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError()
+                self.connection.settimeout(remaining)
+                chunk = self.rfile.read1(min(65536, length - len(data)))
+                if not chunk:
+                    raise RequestRejected("Incomplete request body")
+                data.extend(chunk)
+        except TimeoutError:
+            raise RequestRejected("Request body read timed out", 408) from None
+        finally:
+            self.connection.settimeout(self.REQUEST_READ_SECONDS)
+        try:
+            payload = json.loads(data.decode("utf-8") or "{}")
+        except (UnicodeError, ValueError):
+            raise RequestRejected("Request body must contain valid JSON") from None
+        if not isinstance(payload, dict):
+            raise RequestRejected("Request body must be a JSON object")
+        return payload
+
+    def normalized_path(self):
+        parsed = urlparse(self.path)
+        if parsed.scheme or parsed.netloc or not self.path.startswith("/"):
+            raise RequestRejected("Invalid request path")
+        # Use the same decoding and platform path handling as static serving.
+        # Keep self.path unchanged: decoding it twice would create a new bypass.
+        try:
+            served_path = Path(super().translate_path(self.path)).resolve()
+            relative = served_path.relative_to(STATIC_DIR.resolve()).as_posix()
+        except (ValueError, OSError):
+            raise RequestRejected("Invalid request path") from None
+        return "/" if relative == "." else "/" + relative.casefold()
+
+    def validate_request_origin(self):
+        if self.headers.get("Sec-Fetch-Site", "").strip().lower() == "cross-site":
+            raise RequestRejected("Cross-site requests are not allowed", 403)
+        origins = self.headers.get_all("Origin", [])
+        if not origins:
+            return  # JSON-only command-line/API clients do not send Origin.
+        hosts = self.headers.get_all("Host", [])
+        if len(origins) != 1 or len(hosts) != 1:
+            raise RequestRejected("Invalid request origin", 403)
+        scheme = "https" if SECURE_COOKIES else "http"
+        try:
+            origin = urlparse(origins[0])
+            expected = urlparse(scheme + "://" + hosts[0])
+            def identity(value):
+                if value.scheme not in {"http", "https"} or not value.hostname or value.username or value.password or value.path or value.params or value.query or value.fragment:
+                    raise ValueError()
+                return (value.scheme, value.hostname.lower(), value.port or (443 if value.scheme == "https" else 80))
+            matches = identity(origin) == identity(expected)
+        except ValueError:
+            matches = False
+        if not matches:
+            raise RequestRejected("Request origin does not match this application", 403)
+
+    def login(self, payload):
+        username = str(payload.get("username") or "").strip().lower()
+        retry = self.server.login_attempts.allow(self.client_address[0], username)
+        if retry:
+            return self.json_response({"error": "Too many sign-in attempts. Please wait and retry."}, 429, {"Retry-After": retry})
+        if not self.server.password_slots.acquire(blocking=False):
+            return self.json_response({"error": "Sign-in is busy. Please retry shortly."}, 429, {"Retry-After": 2})
+        try:
+            password = str(payload.get("password") or "")
+            with connect() as db:
+                row = db.execute("SELECT id,username,display_name,password_hash,role,phase,group_id,project_scope FROM users WHERE username=? COLLATE NOCASE AND active=1", (username,)).fetchone()
+            if not row or not password_matches(password, row["password_hash"]):
+                return self.json_response({"error": "Incorrect username or password"}, 401)
+            with _RUNTIME_LOCK:
+                with connect() as db:
+                    current = db.execute("SELECT id,username,display_name,password_hash,role,phase,group_id,project_scope FROM users WHERE id=? AND active=1", (row["id"],)).fetchone()
+                    if not current or current["password_hash"] != row["password_hash"] or not clerk_workspace_matches(dict(current)):
+                        return self.json_response({"error": "Incorrect username or password"}, 401)
+                    row = current
+                    if password_needs_rehash(row["password_hash"]):
+                        db.execute("UPDATE users SET password_hash=? WHERE id=?", (password_digest(password), row["id"]))
+                        db.execute("DELETE FROM sessions WHERE user_id=?", (row["id"],))
+                    db.execute("UPDATE users SET last_login_at=? WHERE id=?", (utc_now(), row["id"]))
+                token = new_session(row["id"])
+            data = json.dumps({"ok": True, "user": {"username": row["username"], "display_name": row["display_name"], "role": row["role"], "phase": row["phase"], "group_id": row["group_id"]}}).encode("utf-8")
+            self.send_response(200); self.send_header("Content-Type", "application/json; charset=utf-8"); self.auth_cookie(token); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.write_body(data)
+        finally:
+            self.server.password_slots.release()
 
     def redirect(self, location):
         self.send_response(303)
@@ -3600,7 +3996,21 @@ class Handler(SimpleHTTPRequestHandler):
         return session_user(self.headers.get("Cookie"))
 
     def do_GET(self):
-        path = urlparse(self.path).path
+        try:
+            path = self.normalized_path()
+            if path.startswith("/api/") and path != "/api/assistant/status":
+                # Authorization and data reads must refer to the same country,
+                # including while another request generates a report preview.
+                with _RUNTIME_LOCK:
+                    return self.dispatch_get(path)
+            return self.dispatch_get(path)
+        except RequestRejected as exc:
+            return self.json_response({"error": str(exc)}, exc.status)
+
+    def do_HEAD(self):
+        return self.do_GET()
+
+    def dispatch_get(self, path):
         user = self.authenticated_user()
         if path == "/api/auth/status":
             with connect() as db:
@@ -3646,7 +4056,7 @@ class Handler(SimpleHTTPRequestHandler):
                 data = my_entries_text(user).encode("utf-8")
                 self.send_response(200); self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.send_header("Content-Disposition", 'attachment; filename="My_Group_Entries.txt"')
-                self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data); return
+                self.send_header("Content-Length", str(len(data))); self.end_headers(); self.write_body(data); return
             except PermissionError as exc: return self.json_response({"error": str(exc)}, 403)
         if path == "/api/projects":
             if user.get("role") not in {"admin", "coordinator"}: return self.json_response({"error": "Coordinator access is required"}, 403)
@@ -3663,18 +4073,18 @@ class Handler(SimpleHTTPRequestHandler):
             data = json.dumps(full_profile(), ensure_ascii=False, indent=2).encode("utf-8")
             self.send_response(200); self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Disposition", 'attachment; filename="Africa_CDC_Assessment_Profile.json"')
-            self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data); return
+            self.send_header("Content-Length", str(len(data))); self.end_headers(); self.write_body(data); return
         if path == "/api/report.txt":
             data = complete_report_text().encode("utf-8")
             self.send_response(200); self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Disposition", 'attachment; filename="Africa_CDC_Assessment_Report.txt"')
-            self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data); return
+            self.send_header("Content-Length", str(len(data))); self.end_headers(); self.write_body(data); return
         if path == "/api/report.docx":
             try:
                 data = report_docx()
                 self.send_response(200); self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
                 self.send_header("Content-Disposition", 'attachment; filename="Africa_CDC_Assessment_Report.docx"')
-                self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
+                self.send_header("Content-Length", str(len(data))); self.end_headers(); self.write_body(data)
             except Exception as exc: self.json_response({"error": str(exc)}, 500)
             return
         if path == "/api/report":
@@ -3689,7 +4099,7 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_header("Content-Disposition", 'attachment; filename="Africa_CDC_Gap_Analysis.xlsx"')
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
-                self.wfile.write(data)
+                self.write_body(data)
             except Exception as exc:
                 self.json_response({"error": str(exc)}, 500)
             return
@@ -3699,7 +4109,7 @@ class Handler(SimpleHTTPRequestHandler):
                 data = standard_format_workbook((phase,))
                 self.send_response(200); self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 self.send_header("Content-Disposition", f'attachment; filename="Africa_CDC_Phase_{phase}.xlsx"')
-                self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
+                self.send_header("Content-Length", str(len(data))); self.end_headers(); self.write_body(data)
             except Exception as exc: self.json_response({"error": str(exc)}, 500)
             return
         if path == "/":
@@ -3707,9 +4117,27 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_POST(self):
-        path = urlparse(self.path).path
         try:
+            path = self.normalized_path()
+            self.validate_request_origin()
             payload = self.body()
+            workspace_paths = REDCAP_PRIMARY_WRITE_PATHS | {
+                "/api/projects/new", "/api/projects/switch", "/api/redcap/pull",
+                "/api/redcap/sync", "/api/accounts/reset", "/api/analysis/report",
+                "/api/analysis/docx",
+            }
+            if path in workspace_paths:
+                # Serialize workspace writes through their REDCap acknowledgement.
+                # Body reads, sign-in and AI streams do not hold this lock.
+                with _RUNTIME_LOCK:
+                    return self.dispatch_post(path, payload)
+            return self.dispatch_post(path, payload)
+        except RequestRejected as exc:
+            self.close_connection = True
+            return self.json_response({"error": str(exc)}, exc.status)
+
+    def dispatch_post(self, path, payload):
+        try:
             if path == "/api/auth/setup":
                 username, password, display_name = validate_credentials(payload.get("username"), payload.get("password"), payload.get("display_name"))
                 with connect() as db:
@@ -3722,19 +4150,7 @@ class Handler(SimpleHTTPRequestHandler):
                 data = json.dumps({"ok": True, "user": {"username": username, "display_name": display_name, "role": "admin"}}).encode("utf-8")
                 self.send_response(201); self.send_header("Content-Type", "application/json; charset=utf-8"); self.auth_cookie(token); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data); return
             if path == "/api/auth/login":
-                username = str(payload.get("username") or "").strip().lower()
-                with connect() as db:
-                    row = db.execute("SELECT id,username,display_name,password_hash,role,phase,group_id FROM users WHERE username=? COLLATE NOCASE AND active=1", (username,)).fetchone()
-                if not row or not password_matches(str(payload.get("password") or ""), row["password_hash"]):
-                    return self.json_response({"error": "Incorrect username or password"}, 401)
-                with connect() as db:
-                    if password_needs_rehash(row["password_hash"]):
-                        db.execute("UPDATE users SET password_hash=? WHERE id=?", (password_digest(str(payload.get("password") or "")), row["id"]))
-                        db.execute("DELETE FROM sessions WHERE user_id=?", (row["id"],))
-                    db.execute("UPDATE users SET last_login_at=? WHERE id=?", (utc_now(), row["id"]))
-                token = new_session(row["id"])
-                data = json.dumps({"ok": True, "user": {"username": row["username"], "display_name": row["display_name"], "role": row["role"], "phase": row["phase"], "group_id": row["group_id"]}}).encode("utf-8")
-                self.send_response(200); self.send_header("Content-Type", "application/json; charset=utf-8"); self.auth_cookie(token); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data); return
+                return self.login(payload)
             if path == "/api/auth/logout":
                 cookie = SimpleCookie(); cookie.load(self.headers.get("Cookie") or "")
                 morsel = cookie.get("africa_cdc_session")
@@ -3861,7 +4277,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.json_response(result)
             if path == "/api/profile/phase1/tool":
                 try:
-                    result = save_inventory_tool(payload)
+                    result = save_inventory_tool(payload, user=user)
                     return self.json_response(scoped_profile(user) if user.get("role") != "admin" else result)
                 except PermissionError as exc:
                     return self.json_response({"error": str(exc)}, 403)
@@ -3869,7 +4285,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.json_response(save_profile_phase("phase2", payload))
             if path == "/api/profile/phase2/tool":
                 try:
-                    result = save_profiling_tool(payload)
+                    result = save_profiling_tool(payload, user=user)
                     return self.json_response(scoped_profile(user) if user.get("role") != "admin" else result)
                 except PermissionError as exc:
                     return self.json_response({"error": str(exc)}, 403)
@@ -4044,6 +4460,10 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json_response({"error": "Not found"}, 404)
         except sqlite3.IntegrityError as exc:
             return self.json_response({"error": str(exc)}, 409)
+        except PermissionError as exc:
+            return self.json_response({"error": str(exc)}, 403)
+        except ValueError as exc:
+            return self.json_response({"error": str(exc)}, 400)
         except Exception as exc:
             return self.json_response({"error": str(exc)}, 500)
 

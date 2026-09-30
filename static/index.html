@@ -247,10 +247,10 @@
   <dialog id="change-password-dialog" class="password-dialog">
     <form id="change-password-form" method="dialog">
       <div class="section-title-row"><div><p class="eyebrow">ACCOUNT SECURITY</p><h2>Change Password</h2></div><button id="close-password-dialog" class="button secondary" type="button">Close</button></div>
-      <p>Enter your temporary or current password, then choose a new password containing uppercase and lowercase letters, a number, and a symbol.</p>
+      <p>Enter your temporary or current password, then choose a new password with at least 15 characters, including uppercase and lowercase letters, a number, and a symbol.</p>
       <label>Current password<input id="current-password" type="password" autocomplete="current-password" required></label>
-      <label>New password<input id="new-password" type="password" autocomplete="new-password" required></label>
-      <label>Confirm new password<input id="confirm-new-password" type="password" autocomplete="new-password" required></label>
+      <label>New password<input id="new-password" type="password" autocomplete="new-password" required minlength="15" maxlength="1024"></label>
+      <label>Confirm new password<input id="confirm-new-password" type="password" autocomplete="new-password" required minlength="15" maxlength="1024"></label>
       <p id="change-password-error" class="login-error hidden"></p>
       <button id="submit-password-change" class="button primary" type="submit">Change Password</button>
     </form>
@@ -260,9 +260,9 @@
     <form id="admin-change-password-form" method="dialog">
       <div class="section-title-row"><div><p class="eyebrow">USER MANAGEMENT</p><h2>Change User Password</h2></div><button id="close-admin-password-dialog" class="button secondary" type="button">Close</button></div>
       <p>Set a new password for <strong id="admin-password-user-name">this user</strong>. Their active sessions will end immediately.</p>
-      <label>New password<input id="admin-new-password" type="password" autocomplete="new-password" required></label>
-      <label>Confirm new password<input id="admin-confirm-password" type="password" autocomplete="new-password" required></label>
-      <p class="section-hint">Use at least six characters, including uppercase and lowercase letters, a number, and a symbol.</p>
+      <label>New password<input id="admin-new-password" type="password" autocomplete="new-password" required minlength="15" maxlength="1024"></label>
+      <label>Confirm new password<input id="admin-confirm-password" type="password" autocomplete="new-password" required minlength="15" maxlength="1024"></label>
+      <p class="section-hint">Use at least 15 characters, including uppercase and lowercase letters, a number, and a symbol.</p>
       <p id="admin-change-password-error" class="login-error hidden"></p>
       <button id="submit-admin-password-change" class="button primary" type="submit">Change Password</button>
     </form>

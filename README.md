@@ -25,7 +25,7 @@ The Docker deployment includes persistent account storage, a health check, and a
 
 1. Double-click `start_web_app.bat` on the computer that will store the shared data.
 2. The application opens at `http://127.0.0.1:8080`.
-3. On the first launch, create the administrator account using a password of at least 6 characters, including a capital letter, lowercase letter, number and symbol.
+3. On the first launch, create the administrator account using a password of at least 15 characters, including a capital letter, lowercase letter, number and symbol.
 4. Other devices on the same network open `http://SERVER-IP:8080`, replacing `SERVER-IP` with the host computer's IPv4 address, then sign in.
 
 The server computer must remain running while participants enter information.
@@ -79,6 +79,10 @@ setx AFRICA_CDC_PASSWORD_PEPPER $pepper
 Store that value in the organisation's password manager or secret manager. Do not put it in this folder, source control, logs, or database backups. Losing or changing it prevents existing Argon2id passwords from being verified. When serving the app over HTTPS, also set `AFRICA_CDC_SECURE_COOKIES=true`.
 
 Participant credentials are deliberately not retained in country snapshots. After switching back to a country, an administrator must use the account reset control to issue fresh credentials to each participant group.
+
+Group accounts are bound to a country and reporting period, and may save only their assigned tools/domains. Loading another country or period revokes the previous group credentials; refreshing the same assessment keeps them. Older group accounts without a country binding require fresh credentials after upgrading. Administrator and coordinator passwords remain valid. New/reset passwords require at least 15 characters; generated credentials contain 16 characters. Repeated sign-in attempts are temporarily limited, with a retry time in the response.
+
+The HTTP server accepts JSON requests up to 16 MiB, with a 30-second body deadline and bounded workers. Spreadsheet imports allow files up to 10 MiB (50 MiB expanded), 100 sheets, 10,000 rows and 100 columns per sheet, and 1,000,000 cells across all sheet ranges. Assessment text in Excel exports is stored literally. Use the HTTPS deployment for shared access; the application rejects mismatched browser origins and adds content/framing protection headers.
 
 ## REDCap-primary storage
 

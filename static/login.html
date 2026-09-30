@@ -23,11 +23,11 @@
         <p id="login-help" class="login-help">Enter your account details to continue.</p>
         <label id="display-name-field" class="hidden">Your name<input id="display-name" autocomplete="name" placeholder="e.g. George Okello"></label>
         <label>Username or email<input id="username" autocomplete="username" required placeholder="Enter username or email address"></label>
-        <label>Password<input id="password" type="password" autocomplete="current-password" required minlength="6" placeholder="Enter password"></label>
+        <label>Password<input id="password" type="password" autocomplete="current-password" required minlength="1" placeholder="Enter password"></label>
         <div id="password-requirements" class="password-requirements hidden" aria-live="polite">
           <p>Password requirements</p>
           <ul>
-            <li data-rule="length">At least 6 characters</li>
+            <li data-rule="length">At least 15 characters</li>
             <li data-rule="upper">One capital letter</li>
             <li data-rule="lower">One lowercase letter</li>
             <li data-rule="number">One number</li>
@@ -35,7 +35,7 @@
           </ul>
           <strong id="password-valid" class="hidden">Password meets all requirements</strong>
         </div>
-        <label id="confirm-field" class="hidden">Confirm password<input id="confirm-password" type="password" autocomplete="new-password" minlength="6" placeholder="Enter password again"></label>
+        <label id="confirm-field" class="hidden">Confirm password<input id="confirm-password" type="password" autocomplete="new-password" minlength="15" maxlength="1024" placeholder="Enter password again"></label>
         <div id="login-error" class="login-error hidden" role="alert"></div>
         <button id="login-submit" class="button primary" type="submit">Sign in</button>
       </form>

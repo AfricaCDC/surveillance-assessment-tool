@@ -20,12 +20,14 @@ function showForm(setup){
   $('#login-help').textContent=setup?'Create the first administrator account using a username or email address.':'Enter your username or email address and password to continue.';
   $('#login-submit').textContent=setup?'Create account and continue':'Sign in';
   $('#password').autocomplete=setup?'new-password':'current-password';
+  $('#password').minLength=setup?15:1;
+  $('#confirm-password').required=setup;
   $('#username').focus();
 }
 
 function showError(message){$('#login-error').textContent=message;$('#login-error').classList.remove('hidden')}
 
-function passwordRules(password){return{length:password.length>=6,upper:/[A-Z]/.test(password),lower:/[a-z]/.test(password),number:/[0-9]/.test(password),symbol:/[^A-Za-z0-9]/.test(password)}}
+function passwordRules(password){return{length:password.length>=15,upper:/[A-Z]/.test(password),lower:/[a-z]/.test(password),number:/[0-9]/.test(password),symbol:/[^A-Za-z0-9]/.test(password)}}
 function updatePasswordFeedback(){if(!setupRequired)return;const rules=passwordRules($('#password').value);Object.entries(rules).forEach(([name,met])=>{document.querySelector(`[data-rule="${name}"]`).classList.toggle('met',met)});$('#password-valid').classList.toggle('hidden',!Object.values(rules).every(Boolean))}
 
 document.addEventListener('DOMContentLoaded',async()=>{
