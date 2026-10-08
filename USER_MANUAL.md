@@ -2,7 +2,7 @@
 
 ## User Manual
 
-Applies to application version **1.0.40**.
+Applies to application version **1.0.42**.
 
 This web application supports three assessment components:
 
@@ -234,3 +234,11 @@ Exports include phase-specific standard workbooks and report downloads. Exportin
 ## 13. Getting help
 
 Provide the country, reporting period, phase, exact action, exact error message, and a screenshot with credentials hidden. Contact the application administrator for accounts and assignments, IT for application availability, and the REDCap administrator for API permissions.
+
+## Hosted application address
+
+Use the public application URL provided by your administrator. If the application
+is hosted under a subpath, keep that prefix in the address, for example
+`https://example.org/tools/assessment/`. Login, navigation, language switching,
+manual links, downloads, and logout use the same application location.
+The login page displays the 12-hour sign-out notice.

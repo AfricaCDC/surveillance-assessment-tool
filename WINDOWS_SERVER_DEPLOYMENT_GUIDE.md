@@ -20,7 +20,7 @@ Africa CDC Python application
 
 REDCap is the authoritative assessment-data store. The local SQLite database stores application accounts, sessions, settings and recovery data.
 
-### Version 1.0.40 operating rules
+### Version 1.0.42 operating rules
 
 - Member State assessment saves require REDCap confirmation; failed saves leave entered values in the browser for retry.
 - The exact country name **Test Country** is temporary in memory, is never sent to REDCap, and is discarded when the application restarts.
@@ -550,3 +550,29 @@ The task must use **Do not start a new instance**. Stop manually launched copies
 - [ ] Restore test is documented.
 - [ ] Application, server and REDCap owners are named.
 - [ ] Monitoring and incident contacts are documented.
+
+
+## Deploying under a subpath
+
+The default deployment uses the domain root. To host at a URL such as
+`https://example.org/tools/assessment/`, set `AFRICA_CDC_BASE_PATH=/tools/assessment`
+in the server environment before starting the application. For Docker, add this
+setting to `docker.env`, rebuild the image, and recreate the application container.
+For Windows, set `$env:AFRICA_CDC_BASE_PATH = '/tools/assessment'` in PowerShell
+before starting the server, or set it in the service environment and restart.
+The setup launcher inherits this environment setting without edits.
+
+Configure the reverse proxy to preserve the prefix when forwarding requests.
+For Caddy, use `handle /tools/assessment/*` with `reverse_proxy app:8080` and
+forward the exact `/tools/assessment` path as well; avoid `handle_path`, which
+strips the prefix. The app redirects the mount URL to its trailing-slash form.
+Use `/tools/assessment/health` for manual health checks and
+`/tools/assessment/login` for sign-in. Logout redirects within the configured
+mount, and session cookies are scoped to it. The Docker health check reads the
+same environment setting automatically.
+
+After deployment, verify sign-in, styles and logo, language switching, manual
+links, report downloads, and logout at the public subpath. Browser URLs are
+relative, so no individual frontend files require changes. Leave the base path
+empty for the existing root deployment; root URLs elsewhere in this guide are
+examples for that default configuration.

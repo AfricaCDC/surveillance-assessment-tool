@@ -32,7 +32,7 @@ function updatePasswordFeedback(){if(!setupRequired)return;const rules=passwordR
 
 document.addEventListener('DOMContentLoaded',async()=>{
   try{
-    const status=await request('/api/auth/status');
+    const status=await request('api/auth/status');
     showForm(status.setup_required);
   }catch(error){$('#login-loading').textContent='Could not connect to the application.';showError(error.message)}
 });
@@ -46,8 +46,8 @@ $('#login-form').addEventListener('submit',async event=>{
   const button=$('#login-submit');button.disabled=true;button.classList.add('busy');button.textContent=setupRequired?'Creating account…':'Signing in…';
   try{
     const payload={username:$('#username').value,password,display_name:$('#display-name').value};
-    await request(setupRequired?'/api/auth/setup':'/api/auth/login',{method:'POST',body:JSON.stringify(payload)});
-    location.replace('/app');
+    await request(setupRequired?'api/auth/setup':'api/auth/login',{method:'POST',body:JSON.stringify(payload)});
+    location.replace('app');
   }catch(error){showError(error.message);button.disabled=false;button.classList.remove('busy');button.textContent=setupRequired?'Create account and continue':'Sign in'}
 });
 $('#password').addEventListener('input',updatePasswordFeedback);

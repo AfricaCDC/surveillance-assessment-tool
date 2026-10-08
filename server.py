@@ -90,7 +90,7 @@ STATIC_DIR = BUNDLE_DIR / "static"
 DB_PATH = Path(os.environ.get("AFRICA_CDC_DB_PATH", APP_DIR / "africa_cdc_web.db"))
 STANDARD_TEMPLATE_PATH = BUNDLE_DIR / "standard_assessment_template.xlsx"
 DEFAULT_REDCAP_API_URL = os.environ.get("AFRICA_CDC_REDCAP_API_URL", "https://tools.africacdc.org/africacdcrc/api/").strip()
-APP_VERSION = "1.0.41"
+APP_VERSION = "1.0.42"
 PROFILE_FORMAT_VERSION = 3
 OLLAMA_URL = os.environ.get("AFRICA_CDC_OLLAMA_URL", "http://127.0.0.1:11434").strip().rstrip("/")
 OLLAMA_MODEL = os.environ.get("AFRICA_CDC_OLLAMA_MODEL", "qwen3:4b-instruct").strip()
@@ -783,6 +783,12 @@ def initialize_database():
 
 PASSWORD_ITERATIONS = 310_000
 SESSION_HOURS = 12
+# Public mount path. The reverse proxy must preserve this prefix when configured.
+BASE_PATH = os.environ.get("AFRICA_CDC_BASE_PATH", "").strip().rstrip("/")
+if BASE_PATH and (not BASE_PATH.startswith("/") or not re.fullmatch(r"(?:/[A-Za-z0-9_-]+)+", BASE_PATH)):
+    raise ValueError("AFRICA_CDC_BASE_PATH must be a path such as /assessment or /tools/assessment")
+COOKIE_PATH = BASE_PATH + "/"
+
 SECURE_COOKIES = os.environ.get("AFRICA_CDC_SECURE_COOKIES", "").strip().lower() in {"1", "true", "yes", "on"}
 PASSWORD_PEPPER = os.environ.get("AFRICA_CDC_PASSWORD_PEPPER", "")
 ARGON2_HASHER = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=4, hash_len=32, salt_len=16) if PasswordHasher else None
@@ -3917,6 +3923,13 @@ class Handler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.scheme or parsed.netloc or not self.path.startswith("/"):
             raise RequestRejected("Invalid request path")
+        if BASE_PATH:
+            if parsed.path == BASE_PATH:
+                return "@mount-root"
+            if not parsed.path.startswith(BASE_PATH + "/"):
+                raise RequestRejected("Path is outside this application", 404)
+            # Strip once so static serving and authorization see the same path.
+            self.path = self.path[len(BASE_PATH):]
         # Use the same decoding and platform path handling as static serving.
         # Keep self.path unchanged: decoding it twice would create a new bypass.
         try:
@@ -3980,17 +3993,17 @@ class Handler(SimpleHTTPRequestHandler):
 
     def redirect(self, location):
         self.send_response(303)
-        self.send_header("Location", location)
+        self.send_header("Location", BASE_PATH + "/" + location.lstrip("/"))
         self.send_header("Content-Length", "0")
         self.end_headers()
 
     def auth_cookie(self, token):
         secure = "; Secure" if SECURE_COOKIES else ""
-        self.send_header("Set-Cookie", f"africa_cdc_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={SESSION_HOURS * 3600}{secure}")
+        self.send_header("Set-Cookie", f"africa_cdc_session={token}; Path={COOKIE_PATH}; HttpOnly; SameSite=Lax; Max-Age={SESSION_HOURS * 3600}{secure}")
 
     def clear_auth_cookie(self):
         secure = "; Secure" if SECURE_COOKIES else ""
-        self.send_header("Set-Cookie", f"africa_cdc_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secure}")
+        self.send_header("Set-Cookie", f"africa_cdc_session=; Path={COOKIE_PATH}; HttpOnly; SameSite=Lax; Max-Age=0{secure}")
 
     def authenticated_user(self):
         return session_user(self.headers.get("Cookie"))
@@ -4011,6 +4024,8 @@ class Handler(SimpleHTTPRequestHandler):
         return self.do_GET()
 
     def dispatch_get(self, path):
+        if path == "@mount-root":
+            return self.redirect("")
         user = self.authenticated_user()
         if path == "/api/auth/status":
             with connect() as db:
@@ -4023,16 +4038,16 @@ class Handler(SimpleHTTPRequestHandler):
             return super().do_GET()
         if path == "/app":
             if not user:
-                return self.redirect("/login")
+                return self.redirect("login")
             self.path = "/index.html"
             return super().do_GET()
         if path == "/user-manual.html":
             if not user:
-                return self.redirect("/login")
+                return self.redirect("login")
             return super().do_GET()
         if path in {"/admin-guide.html", "/update-guide.html"}:
             if not user:
-                return self.redirect("/login")
+                return self.redirect("login")
             if user.get("role") != "admin":
                 return self.json_response({"error": "Administrator access is required"}, 403)
             self.path = "/admin-guide.html"
@@ -4041,7 +4056,7 @@ class Handler(SimpleHTTPRequestHandler):
             if path.startswith("/api/"):
                 return self.json_response({"error": "Authentication required"}, 401)
             if path == "/index.html":
-                return self.redirect("/login")
+                return self.redirect("login")
         if user and user.get("role") not in {"admin", "coordinator"} and (path.startswith("/api/export") or path in {"/api/profile.json", "/api/report", "/api/full-report", "/api/report.txt", "/api/report.docx"}):
             return self.json_response({"error": "Administrator access is required"}, 403)
         if path == "/api/state":
@@ -4477,7 +4492,7 @@ def main():
     server = None
     try:
         initialize_database()
-        local_url = f"http://127.0.0.1:{args.port}"
+        local_url = f"http://127.0.0.1:{args.port}{BASE_PATH}/"
         try:
             server = ExclusiveThreadingHTTPServer((args.host, args.port), Handler)
         except OSError as exc:

@@ -12,6 +12,18 @@ All controlled releases of the Africa CDC Surveillance Digital Tools Assessment 
 - Keep a compact per-tool evidence set so large inventories retain names and recorded functions during local AI analysis.
 - Updated the in-app User Manual and Admin Guide, source/user/deployment/update documentation, packaging readme files, folder reference, and Word regression register through version 1.0.40.
 
+## [1.0.42] - 2026-10-08
+
+Post-security-testing changes implemented in local source; production deployment pending.
+
+- Replace root-absolute browser URLs with relative URLs for assets, API calls, translation files, guide links, downloads, health polling, and login/logout navigation.
+- Add `AFRICA_CDC_BASE_PATH` for server routing, mount-root redirects, authentication redirects, cookie scope, and the local browser launch address.
+- Remove the login-page sentence "Passwords are securely hashed and do not expire." Retain the 12-hour sign-out notice; this is a text change, not a password-policy change.
+- Make the Docker health check read the configured base path and document it in `docker.env.example`.
+- Update README, user and deployment manuals; synchronize current version labels.
+- Validate JavaScript and Python syntax, HTTP routes at root and `/tools/assessment`, and Docker health-check URL construction. Docker image rebuild and public deployment verification remain pending.
+- Detailed report record: `SECURITY_TESTING_CHANGE_RECORD.md`.
+
 ## [1.0.40] - 2026-08-26
 
 - Remove the duplicate **Open-ended themes** shortcut from the Report Assistant header.

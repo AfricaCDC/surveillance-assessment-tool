@@ -1,6 +1,6 @@
 # Africa CDC Shared Web Assessment
 
-Current application version: **1.0.40**  
+Current application version: **1.0.42**
 Profile-data format version: **3**
 
 This is the web-based Africa CDC surveillance systems application covering Inventory, Profiling, and Gap Analysis.
@@ -127,3 +127,18 @@ Stop the server before copying the database. Store every backup only on an encry
 
 If other devices cannot connect, allow Python through Windows Firewall for private networks and confirm all devices are connected to the same network.
 
+
+### Deployment under a subpath
+
+Browser assets, navigation, translations, downloads, and API requests use relative URLs.
+For a deployment at `https://example.org/tools/assessment/`, set
+`AFRICA_CDC_BASE_PATH=/tools/assessment` in the server environment (or `docker.env`)
+and restart the app. Configure the reverse proxy to forward that path unchanged;
+do not strip the prefix in this mode. The server redirects the mount URL without
+its trailing slash to the slash form and scopes session cookies to the mount path.
+Health checks must request `/tools/assessment/health`. An empty setting (default)
+continues to serve at the domain root. No individual frontend files need editing.
+
+Alternatively, a proxy may strip the public prefix with the server base path left
+empty; configure that proxy to rewrite Location and cookie Path headers and redirect
+the public mount URL to its trailing-slash form.

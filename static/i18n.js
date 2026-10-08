@@ -69,7 +69,7 @@
     });
     new MutationObserver(queue).observe(document.body, {subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['placeholder', 'aria-label', 'title']});
     render();
-    Promise.all(['/question-translations.json?v=3', '/choice-translations.json?v=2', '/interface-translations.json?v=2'].map(path =>
+    Promise.all(['question-translations.json?v=3', 'choice-translations.json?v=2', 'interface-translations.json?v=2'].map(path =>
       fetch(path).then(response => response.ok ? response.json() : {}).catch(() => ({}))
     )).then(([questions, choices, ui]) => {
       questionPacks = Object.fromEntries(supported.map(code => [code, {...(ui[code] || {}), ...(choices[code] || {}), ...(questions[code] || {})}]));
