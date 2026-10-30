@@ -90,7 +90,7 @@ STATIC_DIR = BUNDLE_DIR / "static"
 DB_PATH = Path(os.environ.get("AFRICA_CDC_DB_PATH", APP_DIR / "africa_cdc_web.db"))
 STANDARD_TEMPLATE_PATH = BUNDLE_DIR / "standard_assessment_template.xlsx"
 DEFAULT_REDCAP_API_URL = os.environ.get("AFRICA_CDC_REDCAP_API_URL", "https://tools.africacdc.org/africacdcrc/api/").strip()
-APP_VERSION = "1.0.42"
+APP_VERSION = "1.0.43"
 PROFILE_FORMAT_VERSION = 3
 OLLAMA_URL = os.environ.get("AFRICA_CDC_OLLAMA_URL", "http://127.0.0.1:11434").strip().rstrip("/")
 OLLAMA_MODEL = os.environ.get("AFRICA_CDC_OLLAMA_MODEL", "qwen3:4b-instruct").strip()
@@ -351,8 +351,8 @@ def redcap_request(parameters):
                 time.sleep(attempt + 1)
                 continue
             raise RuntimeError(
-                "Could not connect to REDCap after three attempts. Check the internet connection, "
-                "VPN or proxy, and Windows DNS, then try again."
+                "Could not connect to REDCap after three attempts. Check the application server's "
+                "network, DNS, firewall or proxy, and REDCap availability, then try again."
             ) from exc
     if isinstance(result, dict) and result.get("error"):
         raise RuntimeError(result["error"])
@@ -394,7 +394,7 @@ def redcap_records_for_current_project():
         project = db.execute("SELECT redcap_record_id FROM country_projects WHERE id=?", (project_id,)).fetchone()
     record_id = str(project[0] or "").strip() if project else ""
     if not record_id:
-        record_id = f"acdc-{project_id}"
+        record_id = f"acdc-{secrets.token_hex(8)}"
     now = utc_now()
     records = [{
         "record_id": record_id,
@@ -484,6 +484,51 @@ def is_test_country_name(value):
     return re.sub(r"\s+", " ", str(value or "")).strip().casefold() == "test country"
 
 
+class DeletedRedcapRecord(ValueError):
+    """A previously saved assessment is no longer available in REDCap."""
+
+
+def redcap_assessment_index():
+    rows = redcap_request({
+        "content": "record", "type": "flat", "fields[0]": "record_id",
+        "fields[1]": "country_name", "fields[2]": "reporting_period",
+        "rawOrLabel": "raw", "rawOrLabelHeaders": "raw",
+    })
+    if not isinstance(rows, list) or any(not isinstance(row, dict) or not row.get("record_id") or
+            (not row.get("redcap_repeat_instrument") and not {"country_name", "reporting_period"}.issubset(row)) for row in rows):
+        raise RuntimeError("REDCap returned an invalid assessment list; retained workspaces were not cleared.")
+    return {str(row["record_id"]): row for row in rows
+            if not row.get("redcap_repeat_instrument")}
+
+
+def discard_retained_project(project_id):
+    """Clear only temporary assessment data, preserving accounts and configuration."""
+    if project_id == active_project_id():
+        restore_project(blank_project_payload("", "", "Country Assessment"), reset_group_accounts=False)
+        with connect() as db:
+            now = utc_now()
+            replacement = db.execute("INSERT INTO country_projects(country_name,reporting_period,title,payload,created_at,updated_at) VALUES('','','Country Assessment',NULL,?,?)", (now, now)).lastrowid
+            db.execute("UPDATE app_settings SET value=? WHERE key='active_project_id'", (str(replacement),))
+            db.execute("DELETE FROM country_projects WHERE id=?", (project_id,))
+    else:
+        with connect() as db:
+            db.execute("DELETE FROM country_projects WHERE id=?", (project_id,))
+
+
+def reconcile_retained_projects(index=None):
+    index = redcap_assessment_index() if index is None else index
+    with connect() as db:
+        projects = [dict(row) for row in db.execute("SELECT id,redcap_record_id,country_name,reporting_period FROM country_projects WHERE redcap_record_id IS NOT NULL")]
+    for project in projects:
+        record_id = str(project["redcap_record_id"] or "")
+        remote = index.get(record_id)
+        if record_id and (remote is None or any(
+            str(remote.get(key) or "").strip().casefold() != str(project[key] or "").strip().casefold()
+            for key in ("country_name", "reporting_period")
+        )):
+            discard_retained_project(project["id"])
+
+
 def sync_current_project_to_redcap():
     country = str((profile_state().get("phase1") or {}).get("country_name") or "").strip()
     if is_test_country_name(country):
@@ -495,6 +540,21 @@ def sync_current_project_to_redcap():
             "synced_at": utc_now(),
             "message": "Test Country data is temporary and was not saved to REDCap.",
         }
+    with connect() as db:
+        project = db.execute("SELECT redcap_record_id FROM country_projects WHERE id=?", (active_project_id(),)).fetchone()
+    if project and project[0]:
+        project_id = active_project_id()
+        reconcile_retained_projects()
+        with connect() as db:
+            retained = db.execute("SELECT redcap_record_id FROM country_projects WHERE id=?", (project_id,)).fetchone()
+        if not retained or not retained[0]:
+            raise DeletedRedcapRecord("This assessment was deleted or changed in REDCap. Its temporary workspace was cleared. Start a new assessment explicitly; the old record was not recreated.")
+    else:
+        period = str((profile_state().get("phase1") or {}).get("reporting_period") or "").strip()
+        for remote in redcap_assessment_index().values():
+            if (str(remote.get("country_name") or "").strip().casefold() == country.casefold()
+                    and str(remote.get("reporting_period") or "").strip().casefold() == period.casefold()):
+                raise ValueError("This country and reporting period already exist in REDCap. Load REDCap data before updating; a duplicate was not created.")
     record_id, records = redcap_records_for_current_project()
     result = redcap_request({
         "content": "record", "type": "flat", "overwriteBehavior": "overwrite",
@@ -539,7 +599,11 @@ def pull_current_project_from_redcap(country_name=None, reporting_period=None, r
         "content": "record", "type": "flat",
         "rawOrLabel": "raw", "rawOrLabelHeaders": "raw", "exportDataAccessGroups": "false",
     })
-    if not isinstance(all_rows, list) or not all_rows:
+    if not isinstance(all_rows, list) or any(not isinstance(row, dict) or not row.get("record_id") or
+            (not row.get("redcap_repeat_instrument") and not {"country_name", "reporting_period"}.issubset(row)) for row in all_rows):
+        raise RuntimeError("REDCap returned an invalid assessment list; retained workspaces were not cleared.")
+    reconcile_retained_projects({str(row["record_id"]): row for row in all_rows if not row.get("redcap_repeat_instrument")})
+    if not all_rows:
         raise ValueError("No assessment records were returned by REDCap")
     main_rows = [row for row in all_rows if not str(row.get("redcap_repeat_instrument") or "").strip()]
     country_rows = [row for row in main_rows if str(row.get("country_name") or "").strip().casefold() == country.casefold()]
@@ -1457,6 +1521,19 @@ def create_country_project(country_name, reporting_period, open_existing=False):
     if not country_name or not reporting_period:
         raise ValueError("Country and reporting period are required")
     temporary_test = is_test_country_name(country_name)
+    if not temporary_test:
+        index = redcap_assessment_index()
+        reconcile_retained_projects(index)
+        matches = [row for row in index.values() if
+                   str(row.get("country_name") or "").strip().casefold() == country_name.casefold()
+                   and str(row.get("reporting_period") or "").strip().casefold() == reporting_period.casefold()]
+        if matches:
+            if not open_existing:
+                raise ValueError(f"An assessment already exists for {country_name} ({reporting_period}). Open it to update the information?")
+            pull_current_project_from_redcap(country_name, reporting_period)
+            result = country_projects_state()
+            result.update(opened_existing=True, existing_source="redcap")
+            return result
     with connect() as db:
         existing = db.execute(
             "SELECT id,redcap_record_id,payload FROM country_projects WHERE country_name=? COLLATE NOCASE AND reporting_period=? COLLATE NOCASE LIMIT 1",
@@ -1510,7 +1587,7 @@ def create_country_project(country_name, reporting_period, open_existing=False):
 
 def switch_country_project(project_id):
     project_id = int(project_id)
-    if project_id == active_project_id(): return country_projects_state()
+    reconcile_retained_projects()
     with connect() as db:
         row = db.execute("SELECT country_name,reporting_period FROM country_projects WHERE id=?", (project_id,)).fetchone()
         if not row: raise ValueError("Country assessment not found")
@@ -3867,10 +3944,14 @@ class Handler(SimpleHTTPRequestHandler):
                     }
             except Exception as exc:
                 snapshot = getattr(self, "workspace_before_write", None)
-                if snapshot:
+                if snapshot and not isinstance(exc, DeletedRedcapRecord):
                     restore_project(snapshot, reset_group_accounts=False)
-                payload = {"error": f"REDCap did not accept the save: {exc}. Your entered values remain in the browser; retry the save."}
-                status = 502
+                if isinstance(exc, DeletedRedcapRecord):
+                    payload = {"error": str(exc), "workspace_cleared": True}
+                    status = 409
+                else:
+                    payload = {"error": f"REDCap did not accept the save: {exc}. Your entered values remain in the browser; retry the save."}
+                    status = 502
         data = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -4137,7 +4218,7 @@ class Handler(SimpleHTTPRequestHandler):
             self.validate_request_origin()
             payload = self.body()
             workspace_paths = REDCAP_PRIMARY_WRITE_PATHS | {
-                "/api/projects/new", "/api/projects/switch", "/api/redcap/pull",
+                "/api/projects/new", "/api/projects/switch", "/api/projects/reconcile", "/api/redcap/pull",
                 "/api/redcap/sync", "/api/accounts/reset", "/api/analysis/report",
                 "/api/analysis/docx",
             }
@@ -4195,6 +4276,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if path not in clerk_allowed.get(user.get("phase"), set()):
                     return self.json_response({"error": "This account cannot modify that assessment phase"}, 403)
                 payload["group_id"] = user.get("group_id")
+            if path in REDCAP_PRIMARY_WRITE_PATHS or path == "/api/redcap/sync":
+                expected_project = self.headers.get("X-Assessment-Workspace")
+                if expected_project and expected_project != str(active_project_id()):
+                    return self.json_response({"error": "The active assessment workspace changed or was cleared. Reload before entering data again.", "workspace_cleared": True}, 409)
             if path == "/api/analysis/docx":
                 try:
                     data = filtered_analysis_docx(
@@ -4256,6 +4341,11 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.json_response({"ok": bool(status.get("available")), **status})
             if path == "/api/profile/phase1":
                 return self.json_response(save_profile_phase("phase1", payload))
+            if path == "/api/projects/reconcile":
+                if user.get("role") not in {"admin", "coordinator"}:
+                    return self.json_response({"error": "Coordinator access is required"}, 403)
+                reconcile_retained_projects()
+                return self.json_response(country_projects_state())
             if path == "/api/projects/new":
                 return self.json_response(create_country_project(
                     payload.get("country_name"), payload.get("reporting_period"), payload.get("open_existing", False)
@@ -4477,6 +4567,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json_response({"error": str(exc)}, 409)
         except PermissionError as exc:
             return self.json_response({"error": str(exc)}, 403)
+        except DeletedRedcapRecord as exc:
+            return self.json_response({"error": str(exc), "workspace_cleared": True}, 409)
         except ValueError as exc:
             return self.json_response({"error": str(exc)}, 400)
         except Exception as exc:

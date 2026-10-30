@@ -4,6 +4,15 @@ All controlled releases of the Africa CDC Surveillance Digital Tools Assessment 
 
 ## [Unreleased]
 
+## [1.0.43] - 2026-10-30
+
+- Reconcile retained assessment workspaces with REDCap when refreshing countries or reopening assessments.
+- Block old saves from recreating deleted records and reject stale coordinator workspace writes.
+- Preserve retained data during connection failures and invalid REDCap responses.
+- Prevent duplicate country-period saves and use random IDs for new REDCap records.
+- Clarify hosted-server connectivity errors and document deployment and remaining shared-workspace limitations.
+- Add isolated regression checks for deletion, outages, duplicate prevention, and temporary Test Country behavior.
+
 - When a real country-period assessment already exists, prompt the user to open it for updating instead of stopping at a duplicate error.
 - Reopening Test Country for the same reporting period now resets its disposable in-memory workspace instead of reporting that a saved assessment already exists.
 - Test Country logout now clearly discards the temporary workspace and does not attempt a REDCap save.

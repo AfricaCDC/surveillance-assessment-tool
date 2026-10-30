@@ -1,6 +1,6 @@
 # Africa CDC Shared Web Assessment
 
-Current application version: **1.0.42**
+Current application version: **1.0.43**
 Profile-data format version: **3**
 
 This is the web-based Africa CDC surveillance systems application covering Inventory, Profiling, and Gap Analysis.
